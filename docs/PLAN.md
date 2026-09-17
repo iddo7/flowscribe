@@ -31,7 +31,7 @@ Module responsibilities:
 - **`TranscriptionClient`** — builds the multipart request (`MultipartBody`, pure), sends with `URLSession`, maps errors to user-safe messages.
 - **`APIKeyStore`** — env-first (`OPENAI_API_KEY`), then Keychain (service `com.flowscribe.app`, account `openai-api-key`).
 - **`PasteController`** — captures the target app plus caret/focused-input Accessibility geometry, then handles clipboard choreography and CGEvent synthesis; injected checkers make delivery testable.
-- **`HUDController`** — a text-free 68×32 non-activating `NSPanel`: white voice bars for recording, a white rotating ring for transcription, and a brief green success glyph. It uses native `NSGlassEffectView` on macOS 26 and `NSVisualEffectView` fallback on macOS 13–15, anchored beside the paste destination when its geometry is available.
+- **`HUDController`** — a text-free 68×32 non-activating `NSPanel`: white voice bars for recording, a white rotating ring for transcription, and a brief green success glyph. It uses native `NSGlassEffectView` on macOS 26 and `NSVisualEffectView` fallback on macOS 13–15. Its persisted position defaults to bottom-center; six screen-edge presets and caret-following are available in Settings.
 - **`SettingsWindowController`** — save/delete Keychain key; masked status only.
 
 ### OpenAI API choice

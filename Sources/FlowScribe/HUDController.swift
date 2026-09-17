@@ -1,7 +1,44 @@
 import AppKit
 import QuartzCore
 
-/// A compact, non-activating waveform pill shown beside the current text input.
+enum HUDPosition: String, CaseIterable {
+    static let defaultsKey = "hudPosition"
+
+    case nearTyping
+    case topLeft
+    case topCenter
+    case topRight
+    case bottomLeft
+    case bottomCenter
+    case bottomRight
+
+    var title: String {
+        switch self {
+        case .nearTyping: "Near Typing"
+        case .topLeft: "Top Left"
+        case .topCenter: "Top Center"
+        case .topRight: "Top Right"
+        case .bottomLeft: "Bottom Left"
+        case .bottomCenter: "Bottom Center"
+        case .bottomRight: "Bottom Right"
+        }
+    }
+
+    static var selected: HUDPosition {
+        get {
+            guard let rawValue = UserDefaults.standard.string(forKey: defaultsKey),
+                  let position = HUDPosition(rawValue: rawValue) else {
+                return .bottomCenter
+            }
+            return position
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey)
+        }
+    }
+}
+
+/// A compact, non-activating waveform pill with a user-selected screen position.
 @MainActor
 final class HUDController {
     private let panelSize = NSSize(width: 68, height: 32)
@@ -209,10 +246,15 @@ final class HUDController {
     private func position(_ panel: NSPanel, near anchor: CGRect?) {
         guard let screen = screen(containing: anchor) ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
-        let gap: CGFloat = 10
+        let position = HUDPosition.selected
+        let edgeInset: CGFloat = 28
         var origin: NSPoint
 
-        if let anchor, anchor.width.isFinite, anchor.height.isFinite {
+        if position == .nearTyping,
+           let anchor,
+           anchor.width.isFinite,
+           anchor.height.isFinite {
+            let gap: CGFloat = 10
             let horizontalCenter = max(anchor.minX, min(anchor.maxX, anchor.midX))
             origin = NSPoint(
                 x: horizontalCenter - panelSize.width / 2,
@@ -222,10 +264,26 @@ final class HUDController {
                 origin.y = anchor.minY - panelSize.height - gap
             }
         } else {
-            origin = NSPoint(
-                x: visible.midX - panelSize.width / 2,
-                y: visible.maxY - panelSize.height - 34
-            )
+            let resolvedPosition = position == .nearTyping ? HUDPosition.bottomCenter : position
+            let x: CGFloat
+            let y: CGFloat
+
+            switch resolvedPosition {
+            case .topLeft, .bottomLeft:
+                x = visible.minX + edgeInset
+            case .topRight, .bottomRight:
+                x = visible.maxX - panelSize.width - edgeInset
+            default:
+                x = visible.midX - panelSize.width / 2
+            }
+
+            switch resolvedPosition {
+            case .topLeft, .topCenter, .topRight:
+                y = visible.maxY - panelSize.height - edgeInset
+            default:
+                y = visible.minY + edgeInset
+            }
+            origin = NSPoint(x: x, y: y)
         }
 
         origin.x = min(max(origin.x, visible.minX + 8), visible.maxX - panelSize.width - 8)

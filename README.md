@@ -40,7 +40,7 @@ A crucial gotcha: **an app launched from Finder, Spotlight, or `open` does not s
 - Hold **⌃⌥Space** to record; release it to transcribe (Carbon global hotkey).
 - States: **idle → recording → transcribing → idle**. Input during transcription is ignored.
 - The text-free 68×32 HUD uses native Liquid Glass on macOS 26 and an AppKit material fallback on earlier versions. Five white voice bars animate while recording, switch to a white rotating processing ring while transcribing, then resolve to a brief green check.
-- When Accessibility is granted, the HUD follows the focused caret or input field. Apps that do not expose focus geometry fall back to a compact pill at the top-center of the active display.
+- The pill defaults to bottom-center on the active display. Settings offers top/bottom left, center, and right presets, plus **Near Typing** to follow the focused caret or input field.
 - Audio is captured via `AVAudioEngine`, converted to 16 kHz mono 16-bit PCM in memory, written to a **unique temporary WAV** only when you stop, uploaded, then **deleted immediately** — success, failure, cancellation, or quit.
 - Transcript delivery: the app remembers your frontmost application when recording starts, copies the transcript to the clipboard, reactivates that app, and synthesizes **⌘V** — then restores your original clipboard.
 

@@ -7,11 +7,12 @@ final class SettingsWindowController: NSWindowController {
     private let keyField = NSSecureTextField(frame: .zero)
     private let saveButton = NSButton(title: "Save key", target: nil, action: nil)
     private let deleteButton = NSButton(title: "Delete key", target: nil, action: nil)
+    private let positionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
 
     var onKeyChanged: (() -> Void)?
 
     convenience init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 190),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 250),
                               styleMask: [.titled, .closable],
                               backing: .buffered,
                               defer: false)
@@ -40,6 +41,20 @@ final class SettingsWindowController: NSWindowController {
         statusField.textColor = .secondaryLabelColor
         statusField.translatesAutoresizingMaskIntoConstraints = false
 
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+
+        let positionLabel = NSTextField(labelWithString: "Pill position")
+        positionLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        positionLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        positionPopup.addItems(withTitles: HUDPosition.allCases.map(\.title))
+        positionPopup.selectItem(withTitle: HUDPosition.selected.title)
+        positionPopup.target = self
+        positionPopup.action = #selector(positionChanged)
+        positionPopup.translatesAutoresizingMaskIntoConstraints = false
+
         let explanation = NSTextField(labelWithString: "The key is stored in your login Keychain (service com.flowscribe.app, account openai-api-key). An OPENAI_API_KEY environment variable takes precedence.")
         explanation.font = .systemFont(ofSize: 11)
         explanation.textColor = .secondaryLabelColor
@@ -51,6 +66,9 @@ final class SettingsWindowController: NSWindowController {
         content.addSubview(saveButton)
         content.addSubview(deleteButton)
         content.addSubview(statusField)
+        content.addSubview(separator)
+        content.addSubview(positionLabel)
+        content.addSubview(positionPopup)
 
         NSLayoutConstraint.activate([
             explanation.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
@@ -71,6 +89,17 @@ final class SettingsWindowController: NSWindowController {
             statusField.topAnchor.constraint(equalTo: keyField.bottomAnchor, constant: 12),
             statusField.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
             statusField.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+
+            separator.topAnchor.constraint(equalTo: statusField.bottomAnchor, constant: 18),
+            separator.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            separator.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+
+            positionLabel.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 16),
+            positionLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+
+            positionPopup.centerYAnchor.constraint(equalTo: positionLabel.centerYAnchor),
+            positionPopup.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+            positionPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
         ])
     }
 
@@ -97,6 +126,12 @@ final class SettingsWindowController: NSWindowController {
             ? "Key deleted from Keychain."
             : "Could not delete key."
         if ok { onKeyChanged?() }
+    }
+
+    @objc private func positionChanged() {
+        guard let title = positionPopup.selectedItem?.title,
+              let position = HUDPosition.allCases.first(where: { $0.title == title }) else { return }
+        HUDPosition.selected = position
     }
 
     func showWindowNonActivating() {
