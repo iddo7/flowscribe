@@ -4,11 +4,15 @@ import Foundation
 /// Global ⌃⌥Space press/release pair registered with Carbon.
 final class HotKeyManager {
     private var hotKeyRef: EventHotKeyRef?
+    private var settingsHotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
     private var isPressed = false
+    private var isSettingsPressed = false
+    private(set) var isSettingsShortcutRegistered = false
 
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
+    var onSettings: (() -> Void)?
 
     /// Registers Control+Option+Space system-wide and listens for both edges.
     @discardableResult
@@ -25,7 +29,13 @@ final class HotKeyManager {
             guard let event, let userData else { return noErr }
             let manager = Unmanaged<HotKeyManager>.fromOpaque(userData).takeUnretainedValue()
             let eventKind = GetEventKind(event)
-            DispatchQueue.main.async { manager.handle(eventKind: eventKind) }
+            var hotKeyID = EventHotKeyID()
+            guard GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                                    EventParamType(typeEventHotKeyID), nil,
+                                    MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID) == noErr,
+                  hotKeyID.signature == OSType(0x464C5753) else { return OSStatus(eventNotHandledErr) }
+            let id = hotKeyID.id
+            DispatchQueue.main.async { manager.handle(eventKind: eventKind, id: id) }
             return noErr
         }
 
@@ -52,10 +62,25 @@ final class HotKeyManager {
             unregister()
             return false
         }
+        let settingsID = EventHotKeyID(signature: OSType(0x464C5753), id: 2)
+        isSettingsShortcutRegistered = RegisterEventHotKey(UInt32(kVK_ANSI_Comma),
+                                                           UInt32(controlKey | optionKey), settingsID,
+                                                           GetApplicationEventTarget(), 0,
+                                                           &settingsHotKeyRef) == noErr
         return true
     }
 
-    private func handle(eventKind: UInt32) {
+    private func handle(eventKind: UInt32, id: UInt32) {
+        if id == 2 {
+            if eventKind == UInt32(kEventHotKeyPressed), !isSettingsPressed {
+                isSettingsPressed = true
+                onSettings?()
+            } else if eventKind == UInt32(kEventHotKeyReleased) {
+                isSettingsPressed = false
+            }
+            return
+        }
+        guard id == 1 else { return }
         switch eventKind {
         case UInt32(kEventHotKeyPressed) where !isPressed:
             isPressed = true
@@ -70,6 +95,12 @@ final class HotKeyManager {
 
     func unregister() {
         isPressed = false
+        isSettingsPressed = false
+        isSettingsShortcutRegistered = false
+        if let ref = settingsHotKeyRef {
+            UnregisterEventHotKey(ref)
+            settingsHotKeyRef = nil
+        }
         if let ref = hotKeyRef {
             UnregisterEventHotKey(ref)
             hotKeyRef = nil

@@ -27,12 +27,14 @@ Module responsibilities:
 - **`main.swift`** — boots `NSApplication` with `.accessory` activation policy (no Dock icon).
 - **`AppDelegate`** — owns the status item, menu, and orchestration; the only place with side effects.
 - **`TranscriptionStateMachine`** — pure transition table; invalid transitions are rejected and reported, never silently coerced.
-- **`AudioCapture`** — `AVAudioEngine` tap → `AVAudioConverter` (Int16, 16 kHz, mono) → in-memory buffer; WAV materialized only at stop, via `TempFileStore` (unique name, `0600`).
+- **`AudioCapture`** — serial background lifecycle queue; fresh `AVAudioEngine` and converter per input route → Int16, 16 kHz mono in-memory buffer; route changes preserve PCM, retired stream callbacks are ignored, and WAV is materialized only at stop via `TempFileStore` (unique name, `0600`). An injectable engine boundary allows hardware-free lifecycle tests.
+- **`AudioInputDevices` / `AudioInputSelection`** — enumerate Core Audio input devices and observe inventory/default changes; persist a stable microphone UID or follow System Default. A disconnected selection falls back to the default without forgetting the preference.
 - **`TranscriptionClient`** — builds the multipart request (`MultipartBody`, pure), sends with `URLSession`, maps errors to user-safe messages.
 - **`APIKeyStore`** — env-first (`OPENAI_API_KEY`), then Keychain (service `com.flowscribe.app`, account `openai-api-key`).
 - **`PasteController`** — captures the target app plus caret/focused-input Accessibility geometry, then handles clipboard choreography and CGEvent synthesis; injected checkers make delivery testable.
-- **`HUDController`** — a text-free 68×32 non-activating `NSPanel`: white voice bars for recording, a white rotating ring for transcription, and a brief green success glyph. It uses native `NSGlassEffectView` on macOS 26 and `NSVisualEffectView` fallback on macOS 13–15. Its persisted position defaults to bottom-center; six screen-edge presets and caret-following are available in Settings.
-- **`SettingsWindowController`** — save/delete Keychain key; masked status only.
+- **`HUDController`** — a text-free 68×32 non-activating `NSPanel`: appearance-aware voice bars for recording, a matching rotating ring for transcription, and a brief green success glyph. It uses native `NSGlassEffectView` on macOS 26 and `NSVisualEffectView` fallback on macOS 13–15. Its persisted position defaults to bottom-center; six screen-edge presets and caret-following are available in Settings.
+- **`SettingsWindowController`** — save/delete Keychain key; masked status only; live microphone picker, local input test, latest error detail, and pill position. Reopening the app or pressing ⌃⌥, opens Settings independently of the status item.
+- **`MicrophoneTest`** — two-second local capture check; temporary audio deleted before reporting captured duration, with no transcription, upload, or clipboard changes.
 
 ### OpenAI API choice
 
@@ -66,6 +68,10 @@ The hotkey manager emits distinct press and release edges: press starts from idl
 | Hotkey already registered | Notice at launch; app still usable from the menu |
 | Mic permission denied | Recording refused, notice opens the Microphone settings pane |
 | Engine start error | Reset to idle, notice, no API call |
+| Microphone / engine format changes | Rebuild engine and converter off the UI thread, preserve prior PCM, continue on resolved input |
+| Healthy engine startup notification | Ignore when the input and format remain current; prevents a restart loop |
+| Microphone supplies zero samples | Explicit input failure in Settings, distinct from a too-short recording |
+| All microphones unavailable / route recovery fails | Discard session, reset pill and state to idle, notice; next hold starts fresh |
 | Recording < ~0.3 s | No temp file, no API call, gentle notice |
 | No API key | Notice with recovery path to Settings window |
 | Network error / timeout (60 s) | Coarse message ("timed out", "offline"); state resets to idle |
@@ -81,6 +87,8 @@ Unit tests cover **pure logic only** (no audio hardware, no network, no real Key
 - WAV header byte-level layout and finalize rewrites (`WAVHeaderTests`).
 - Multipart framing, unique boundaries, verbatim file bytes, optional language field (`MultipartBodyTests`).
 - State machine: happy path, failure path, invalid transitions, toggle-per-state, transition callbacks (`StateMachineTests`).
+- Input selection: system default changes, explicit UID preference, disconnect/reconnect, duplicate labels, missing inputs (`AudioInputSelectionTests`).
+- Capture lifecycle with fake engines: route/format changes, retained PCM, background start/stop, stop during startup, failed restart/start, retired callbacks (`AudioCaptureTests`).
 - Model resolution incl. override/blank/trim, too-short detection at boundaries, response parsing (`TranscriptionSupportTests`).
 - Env key resolution hermetically via injected environment; constants pinned (`APIKeyStoreTests`).
 

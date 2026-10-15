@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 /// Resolves the OpenAI API key: OPENAI_API_KEY env first, then Keychain
@@ -21,6 +22,27 @@ enum APIKeyStore {
     }
 
     // MARK: - Keychain (generic password items)
+
+    /// Checks metadata without decrypting the key or displaying an access prompt.
+    /// nil means Keychain status could not be checked, rather than a missing key.
+    static func containsKeychainKey() -> Bool? {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: context
+        ]
+        var result: AnyObject?
+        switch SecItemCopyMatching(query as CFDictionary, &result) {
+        case errSecSuccess: return true
+        case errSecItemNotFound: return false
+        default: return nil
+        }
+    }
 
     static func readKeychain() -> String? {
         let query: [String: Any] = [

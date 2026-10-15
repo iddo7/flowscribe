@@ -30,6 +30,7 @@ fi
 
 echo "Assembling ${APP_DIR} ..."
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+cp "${REPO_DIR}/Resources/FlowScribe.icns" "$RESOURCES_DIR/FlowScribe.icns"
 
 cat > "${APP_DIR}/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -46,6 +47,8 @@ cat > "${APP_DIR}/Contents/Info.plist" <<'PLIST'
     <string>6.0</string>
     <key>CFBundleName</key>
     <string>FlowScribe</string>
+    <key>CFBundleIconFile</key>
+    <string>FlowScribe.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

@@ -83,7 +83,7 @@ final class HUDController {
     }
 
     func showFailure(near anchor: CGRect? = nil) {
-        showResult(symbol: "exclamationmark", color: .white, near: anchor, duration: 1.05)
+        showResult(symbol: "exclamationmark", color: .labelColor, near: anchor, duration: 1.05)
     }
 
     func hide() {
@@ -122,11 +122,11 @@ final class HUDController {
             glass.autoresizingMask = [.width, .height]
             glass.style = .regular
             glass.cornerRadius = panelSize.height / 2
-            glass.tintColor = NSColor.white.withAlphaComponent(0.08)
+            glass.tintColor = NSColor.labelColor.withAlphaComponent(0.08)
             glass.contentView = content
             background = glass
         } else {
-            let visual = NSVisualEffectView(frame: content.frame)
+            let visual = HUDEffectView(frame: content.frame)
             visual.autoresizingMask = [.width, .height]
             visual.material = .hudWindow
             visual.blendingMode = .behindWindow
@@ -135,7 +135,7 @@ final class HUDController {
             visual.layer?.cornerRadius = panelSize.height / 2
             visual.layer?.masksToBounds = true
             visual.layer?.borderWidth = 0.5
-            visual.layer?.borderColor = NSColor.white.withAlphaComponent(0.28).cgColor
+            visual.borderTint = NSColor.labelColor.withAlphaComponent(0.28)
             visual.addSubview(content)
             background = visual
         }
@@ -172,17 +172,17 @@ final class HUDController {
         case .idle:
             waveformView?.stopAnimating()
             waveformView?.isHidden = false
-            setTint(.white)
+            setTint(.labelColor)
         case .recording:
             waveformView?.isHidden = false
             waveformView?.startAnimating()
-            setTint(.white)
+            setTint(.labelColor)
         case .transcribing:
             waveformView?.stopAnimating()
             waveformView?.isHidden = true
             processingView?.isHidden = false
             processingView?.startAnimating()
-            setTint(.white)
+            setTint(.labelColor)
         }
     }
 
@@ -236,10 +236,12 @@ final class HUDController {
     }
 
     private func setTint(_ color: NSColor) {
+        guard let effectView else { return }
+
         if #available(macOS 26.0, *), let glass = effectView as? NSGlassEffectView {
             glass.tintColor = color.withAlphaComponent(0.14)
-        } else {
-            effectView?.layer?.borderColor = color.withAlphaComponent(0.42).cgColor
+        } else if let visual = effectView as? HUDEffectView {
+            visual.borderTint = color.withAlphaComponent(0.42)
         }
     }
 
@@ -302,7 +304,31 @@ final class HUDController {
     }
 }
 
-/// Five white bars with deliberately uneven phases, giving the pill an organic voice meter.
+/// The material fallback keeps its layer border in sync with the current appearance.
+private final class HUDEffectView: NSVisualEffectView {
+    var borderTint: NSColor = .labelColor {
+        didSet { updateBorderColor() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateBorderColor()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateBorderColor()
+    }
+
+    private func updateBorderColor() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.borderColor = effectiveAppearance.resolvedCGColor(borderTint)
+        CATransaction.commit()
+    }
+}
+
+/// Five appearance-aware bars with deliberately uneven phases, giving the pill an organic voice meter.
 private final class WaveformView: NSView {
     private let bars: [CALayer]
 
@@ -312,7 +338,6 @@ private final class WaveformView: NSView {
             let bar = CALayer()
             bar.bounds = CGRect(x: 0, y: 0, width: 3, height: height)
             bar.cornerRadius = 1.5
-            bar.backgroundColor = NSColor.white.cgColor
             return bar
         }
         super.init(frame: frameRect)
@@ -326,10 +351,29 @@ private final class WaveformView: NSView {
             bar.position = CGPoint(x: startX + CGFloat(index) * spacing, y: frameRect.height / 2)
             layer?.addSublayer(bar)
         }
+        updateColors()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateColors()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
+    }
+
+    private func updateColors() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let foreground = effectiveAppearance.resolvedCGColor(.labelColor)
+        bars.forEach { $0.backgroundColor = foreground }
+        CATransaction.commit()
+    }
 
     func startAnimating() {
         let patterns: [[CGFloat]] = [
@@ -371,13 +415,13 @@ private final class ProcessingView: NSView {
         wantsLayer = true
 
         ring.fillColor = NSColor.clear.cgColor
-        ring.strokeColor = NSColor.white.cgColor
         ring.lineWidth = 2.2
         ring.lineCap = .round
         ring.strokeStart = 0.08
         ring.strokeEnd = 0.72
         layer?.addSublayer(ring)
         updateRingGeometry()
+        updateColors()
     }
 
     @available(*, unavailable)
@@ -386,6 +430,23 @@ private final class ProcessingView: NSView {
     override func layout() {
         super.layout()
         updateRingGeometry()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateColors()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
+    }
+
+    private func updateColors() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        ring.strokeColor = effectiveAppearance.resolvedCGColor(.labelColor)
+        CATransaction.commit()
     }
 
     private func updateRingGeometry() {
@@ -423,5 +484,16 @@ private final class ProcessingView: NSView {
 
     func stopAnimating() {
         ring.removeAllAnimations()
+    }
+}
+
+private extension NSAppearance {
+    /// Semantic AppKit colors only resolve correctly while their target appearance is current.
+    func resolvedCGColor(_ color: NSColor) -> CGColor {
+        var resolved = color.cgColor
+        performAsCurrentDrawingAppearance {
+            resolved = color.cgColor
+        }
+        return resolved
     }
 }

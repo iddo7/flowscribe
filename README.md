@@ -16,6 +16,9 @@ open ~/Applications/FlowScribe.app
 
 After launching, click the 🎙 menu-bar icon → **Settings…** and save your API key. It is stored in your login Keychain and is the recommended setup for an installed app.
 
+If the menu bar is crowded, press **⌃⌥,** to open Settings, or reopen **FlowScribe.app** from Finder or Spotlight. Settings also opens when the app launches.
+Use **⌘H** to hide Settings or **⌘W** to close it; dictation continues in the background.
+
 For a one-off environment-variable launch, run the executable itself from a terminal that already exports the key:
 
 ```bash
@@ -39,10 +42,19 @@ A crucial gotcha: **an app launched from Finder, Spotlight, or `open` does not s
 - Menu-bar-only app (`LSUIElement`) — no Dock icon.
 - Hold **⌃⌥Space** to record; release it to transcribe (Carbon global hotkey).
 - States: **idle → recording → transcribing → idle**. Input during transcription is ignored.
-- The text-free 68×32 HUD uses native Liquid Glass on macOS 26 and an AppKit material fallback on earlier versions. Five white voice bars animate while recording, switch to a white rotating processing ring while transcribing, then resolve to a brief green check.
+- The text-free 68×32 HUD uses native Liquid Glass on macOS 26 and an AppKit material fallback on earlier versions. Five appearance-aware voice bars animate while recording, switch to a rotating processing ring while transcribing, then resolve to a brief green check.
 - The pill defaults to bottom-center on the active display. Settings offers top/bottom left, center, and right presets, plus **Near Typing** to follow the focused caret or input field.
 - Audio is captured via `AVAudioEngine`, converted to 16 kHz mono 16-bit PCM in memory, written to a **unique temporary WAV** only when you stop, uploaded, then **deleted immediately** — success, failure, cancellation, or quit.
+- Microphone changes rebuild the audio engine and converter while retaining audio already captured. Audio start/stop work runs off the UI thread so hotkey release can update the recording pill immediately.
 - Transcript delivery: the app remembers your frontmost application when recording starts, copies the transcript to the clipboard, reactivates that app, and synthesizes **⌘V** — then restores your original clipboard.
+
+## Microphone selection
+
+Open **Settings… → Microphone** and choose **System Default** to follow your Mac’s current input, or select a specific microphone for FlowScribe. The choice is saved across launches and applies to an active recording as well.
+
+If your selected microphone disconnects, FlowScribe temporarily uses the system default and returns to the selected microphone when it reconnects. A route change may leave a brief gap in the recording. If no usable microphone remains, recording ends with a notice and the pill resets; connect a microphone and hold the shortcut again.
+
+**Test microphone** checks the selected input for two seconds locally, without uploading audio or changing the clipboard. **Latest message** shows the actual recording/transcription error when the pill displays `!`, including when macOS notifications are hidden.
 
 ## Permissions (System Settings → Privacy & Security)
 
@@ -90,11 +102,15 @@ swift test
 
 - **"Could not register the ⌃⌥Space global shortcut"** — another app owns it. Quit the other app or remap there.
 - **Recording fails immediately** — Microphone permission not granted; open System Settings → Privacy & Security → Microphone.
+- **Wrong microphone / input disconnected** — check Settings → Microphone. System Default follows macOS; a specific selection overrides it. The device list refreshes as microphones connect or disconnect.
+- **Immediate `!` after release** — open Settings with ⌃⌥, and read Latest message. Use Test microphone to distinguish an input failure from an API/key/network error.
 - **"Transcript copied" notice appears instead of pasting** — Accessibility is missing or stale. Quit FlowScribe, run `tccutil reset Accessibility com.flowscribe.app`, relaunch it, and grant the fresh prompt. `scripts/install.sh` bundle-signs the app with a stable designated requirement so future rebuilds retain the correct identity.
 - **HTTP 401** — key invalid. HTTP 403 — key lacks access to the model. HTTP 429 — rate-limited; wait.
 - **No text / "too short"** — recordings under ~0.3 s are discarded without an API call.
 - **Key works in terminal but app says no key** — Finder didn't inherit your env (see above); use the Settings window.
 - **Stuck on "Transcribing…"** — requests time out after 60 s and the state machine resets automatically; check connectivity.
+
+To check microphone switching on your hardware, hold the shortcut and speak, unplug the headset or change the default input in macOS, continue speaking, then release. The pill should leave recording immediately and transcribe the captured audio. Also check a manually selected microphone while changing the macOS default, and disconnect/reconnect that selected microphone.
 
 ## Uninstall
 

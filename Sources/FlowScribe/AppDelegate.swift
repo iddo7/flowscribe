@@ -15,32 +15,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var capturedTarget: PasteController.Target?
     private var pendingTempFile: URL?
     private var permissionTask: Task<Void, Never>?
+    private var permissionRequestID: UUID?
     private var transcriptionTask: Task<Void, Never>?
+    private var captureSessionID: UUID?
     private var isHotKeyHeld = false
 
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setUpApplicationMenu()
         setUpMenu()
+        capture.onFailure = { [weak self] sessionID, error in
+            guard let self, self.captureSessionID == sessionID else { return }
+            self.handleCaptureFailure(error)
+        }
         hotKeys.onPress = { [weak self] in self?.handleHotKeyPressed() }
         hotKeys.onRelease = { [weak self] in self?.handleHotKeyReleased() }
+        hotKeys.onSettings = { [weak self] in self?.settingsTapped() }
         if !hotKeys.register() {
             presentNotice(title: "FlowScribe", body: "Could not register the ⌃⌥Space global shortcut. It may be in use by another app.")
         }
         _ = Permissions.requestAccessibilityIfNeeded()
         updateMenu()
+        if !hotKeys.isSettingsShortcutRegistered {
+            presentNotice(title: "Settings shortcut unavailable",
+                          body: "⌃⌥, is already in use. Reopen FlowScribe from Finder or Spotlight to open Settings.")
+        }
+        settingsTapped()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        settingsTapped()
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         hotKeys.unregister()
         permissionTask?.cancel()
+        permissionRequestID = nil
         transcriptionTask?.cancel()
+        captureSessionID = nil
         isHotKeyHeld = false
         capture.discard()
         cleanupPendingFile()
     }
 
     // MARK: - Menu bar
+
+    private func setUpApplicationMenu() {
+        let mainMenu = NSMenu()
+        let applicationItem = NSMenuItem()
+        let applicationMenu = NSMenu(title: "FlowScribe")
+        applicationItem.submenu = applicationMenu
+        mainMenu.addItem(applicationItem)
+
+        let settings = NSMenuItem(title: "Settings…", action: #selector(settingsTapped), keyEquivalent: ",")
+        settings.target = self
+        applicationMenu.addItem(settings)
+        applicationMenu.addItem(.separator())
+        let hide = NSMenuItem(title: "Hide FlowScribe", action: #selector(hideSettingsTapped), keyEquivalent: "h")
+        hide.target = self
+        applicationMenu.addItem(hide)
+        let hideOthers = NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        hideOthers.target = NSApp
+        applicationMenu.addItem(hideOthers)
+        let showAll = NSMenuItem(title: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        showAll.target = NSApp
+        applicationMenu.addItem(showAll)
+        applicationMenu.addItem(.separator())
+        let quit = NSMenuItem(title: "Quit FlowScribe", action: #selector(quitTapped), keyEquivalent: "q")
+        quit.target = self
+        applicationMenu.addItem(quit)
+
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "Window")
+        windowItem.submenu = windowMenu
+        windowMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        mainMenu.addItem(windowItem)
+        NSApp.mainMenu = mainMenu
+    }
 
     private func setUpMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -84,6 +138,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.showWindowNonActivating()
     }
 
+    @objc private func hideSettingsTapped() {
+        // NSApplication.hide is disabled for accessory apps; hide our window directly.
+        settingsWindow.window?.orderOut(nil)
+    }
+
     @objc private func quitTapped() {
         NSApp.terminate(nil)
     }
@@ -115,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let task = permissionTask {
             task.cancel()
             permissionTask = nil
+            permissionRequestID = nil
             capturedTarget = nil
             return
         }
@@ -127,10 +187,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func requestStartRecording() {
         guard permissionTask == nil, stateMachine.canStartRecording else { return }
         capturedTarget = PasteController.rememberPasteTarget()
+        let requestID = UUID()
+        permissionRequestID = requestID
         permissionTask = Task { [weak self] in
             let granted = await Permissions.requestMicrophoneAccess()
-            guard let self else { return }
+            guard let self, self.permissionRequestID == requestID else { return }
             self.permissionTask = nil
+            self.permissionRequestID = nil
             guard !Task.isCancelled else { return }
             guard granted else {
                 self.capturedTarget = nil
@@ -147,45 +210,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func beginRecording() {
         guard stateMachine.handle(.startRecordingRequested) else { return }
+        let sessionID = UUID()
+        captureSessionID = sessionID
         updateMenu()
         hud.show(state: stateMachine.state, near: capturedTarget?.anchorRect)
-        do {
-            try capture.start()
-        } catch {
-            stateMachine.handle(.resetRequested)
-            capture.discard()
-            capturedTarget = nil
-            hud.hide()
-            updateMenu()
-            presentNotice(title: "FlowScribe can’t record",
-                          body: (error as? LocalizedError)?.errorDescription ?? "Unknown microphone error.",
-                          recovery: .openMicrophoneSettings)
+        capture.start(sessionID: sessionID) { [weak self] result in
+            guard let self, self.captureSessionID == sessionID else { return }
+            if case .failure(let error) = result {
+                self.handleCaptureFailure(error)
+            }
         }
     }
 
+    private func handleCaptureFailure(_ error: Error) {
+        captureSessionID = nil
+        stateMachine.handle(.resetRequested)
+        capture.discard()
+        capturedTarget = nil
+        hud.hide()
+        updateMenu()
+        presentNotice(title: "FlowScribe can’t record",
+                      body: (error as? LocalizedError)?.errorDescription ?? "Unknown microphone error.")
+    }
+
     private func stopRecordingAndTranscribe() {
-        guard stateMachine.handle(.stopRecordingRequested) else { return }
+        guard let sessionID = captureSessionID,
+              stateMachine.handle(.stopRecordingRequested) else { return }
         hud.update(state: stateMachine.state, near: capturedTarget?.anchorRect)
         updateMenu()
 
-        let file: URL
-        do {
-            guard let capturedFile = try capture.stop() else {
-                resetAfterShortRecording()
+        capture.stop(sessionID: sessionID) { [weak self] result in
+            guard let self, self.captureSessionID == sessionID else {
+                if case .success(let file?) = result { TempFileStore.remove(file) }
                 return
             }
-            file = capturedFile
-        } catch {
-            stateMachine.handle(.resetRequested)
-            hud.hide()
-            updateMenu()
-            capturedTarget = nil
-            presentNotice(
-                title: "FlowScribe couldn’t save the recording",
-                body: (error as? LocalizedError)?.errorDescription ?? "A local file error occurred."
-            )
-            return
+            self.captureSessionID = nil
+            switch result {
+            case .success(let file?):
+                self.beginTranscription(file: file)
+            case .success(nil):
+                self.resetAfterShortRecording()
+            case .failure(let error):
+                self.stateMachine.handle(.resetRequested)
+                self.hud.hide()
+                self.updateMenu()
+                self.capturedTarget = nil
+                self.presentNotice(
+                    title: error is AudioCapture.CaptureError ? "FlowScribe received no audio" : "FlowScribe couldn’t save the recording",
+                    body: (error as? LocalizedError)?.errorDescription ?? "A local file error occurred."
+                )
+            }
         }
+    }
+
+    private func beginTranscription(file: URL) {
         pendingTempFile = file
 
         transcriptionTask = Task { [weak self] in
@@ -272,6 +350,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - User notices
 
     private func presentNotice(title: String, body: String, recovery: Notice.Recovery = .none) {
+        settingsWindow.showNotice(title: title, body: body)
         let notice = NSUserNotification()
         notice.title = title
         notice.informativeText = body
