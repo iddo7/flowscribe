@@ -2,6 +2,9 @@ import Foundation
 
 struct PillSettings: Equatable {
     static let didChange = Notification.Name("FlowScribePillSettingsDidChange")
+    // Pin the preferences domain so rebuilding or launching a different executable
+    // path still reads the installed app's settings. Keep existing keys unchanged.
+    static let persistedDefaults = UserDefaults(suiteName: "com.flowscribe.app") ?? .standard
 
     enum Field: String, CaseIterable {
         case width, height, bars, speed, sensitivity
@@ -58,7 +61,7 @@ struct PillSettings: Equatable {
 
     private var values: [Field: Double] = [:]
 
-    init(defaults: UserDefaults? = .standard) {
+    init(defaults: UserDefaults? = PillSettings.persistedDefaults) {
         for field in Field.allCases {
             let stored = defaults?.object(forKey: field.defaultsKey) as? NSNumber
             self[field] = stored?.doubleValue ?? field.defaultValue
@@ -70,7 +73,7 @@ struct PillSettings: Equatable {
         set { values[field] = field.validated(newValue) }
     }
 
-    func save(to defaults: UserDefaults = .standard) {
+    func save(to defaults: UserDefaults = PillSettings.persistedDefaults) {
         for field in Field.allCases { defaults.set(self[field], forKey: field.defaultsKey) }
         NotificationCenter.default.post(name: Self.didChange, object: nil)
     }

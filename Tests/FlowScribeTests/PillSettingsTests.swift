@@ -19,6 +19,24 @@ final class PillSettingsTests: XCTestCase {
         XCTAssertEqual(PillSettings(defaults: defaults), original)
     }
 
+    func testCustomSettingsSurviveReopeningPreferencesWithoutBeingReplacedByDefaults() throws {
+        let suite = "FlowScribeTests.\(UUID())"
+        let originalStore = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { originalStore.removePersistentDomain(forName: suite) }
+        var chosen = PillSettings(defaults: nil)
+        chosen[.width] = 75
+        chosen[.height] = 35
+        chosen[.bars] = 10
+        chosen[.speed] = 1.7
+        chosen[.sensitivity] = 2
+        chosen.save(to: originalStore)
+
+        let reopenedStore = try XCTUnwrap(UserDefaults(suiteName: suite))
+        XCTAssertEqual(PillSettings(defaults: reopenedStore), chosen)
+        _ = PillSettings(defaults: nil) // Constructing a default preview must never save defaults.
+        XCTAssertEqual(PillSettings(defaults: reopenedStore), chosen)
+    }
+
     func testInvalidStoredSettingsCannotBreakLayoutOrTiming() throws {
         let suite = "FlowScribeTests.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

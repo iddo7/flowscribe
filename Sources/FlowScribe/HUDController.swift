@@ -371,6 +371,7 @@ private final class HUDEffectView: NSVisualEffectView {
 /// A scrolling history of measured audio, shared by the HUD and the labeled Settings preview.
 final class WaveformView: NSView {
     private var bars: [CALayer] = []
+    private let edgeFade = CAGradientLayer()
     private var timer: Timer?
     private var settings = PillSettings(defaults: nil)
     private var history = WaveformHistory()
@@ -382,6 +383,12 @@ final class WaveformView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.masksToBounds = false
+        edgeFade.startPoint = CGPoint(x: 0, y: 0.5)
+        edgeFade.endPoint = CGPoint(x: 1, y: 0.5)
+        edgeFade.colors = [NSColor.clear.cgColor, NSColor.black.cgColor,
+                           NSColor.black.cgColor, NSColor.clear.cgColor]
+        edgeFade.locations = [0, 0.2, 0.8, 1]
+        layer?.mask = edgeFade
         configure(settings)
     }
 
@@ -408,14 +415,23 @@ final class WaveformView: NSView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        edgeFade.frame = bounds
         let spacing = bounds.width / CGFloat(bars.count)
         let width = min(3, spacing * 0.55)
         for (index, bar) in bars.enumerated() {
             bar.position = CGPoint(x: (CGFloat(index) + 0.5) * spacing, y: bounds.midY)
-            bar.bounds.size = NSSize(width: width, height: 3 + CGFloat(displayedLevels[index]) * (bounds.height - 3))
+            bar.bounds.size = NSSize(width: width, height: barHeight(displayedLevels[index], at: index))
             bar.cornerRadius = width / 2
         }
         CATransaction.commit()
+    }
+
+    private func barHeight(_ level: Double, at index: Int) -> CGFloat {
+        // Taper the outside quarter at each end so sustained loud audio keeps soft ends.
+        let position = (Double(index) + 0.5) / Double(bars.count)
+        let progress = min(1, min(position, 1 - position) / 0.25)
+        let taper = 0.35 + 0.65 * progress * progress * (3 - 2 * progress)
+        return 3 + CGFloat(level * taper) * max(0, bounds.height - 3)
     }
 
     override func viewDidMoveToWindow() {
@@ -467,7 +483,7 @@ final class WaveformView: NSView {
             let target = pow(min(1, max(0, history.levels[index])), 1 / settings[.sensitivity])
             // Brief interpolation smooths frames without washing out neighboring syllables.
             displayedLevels[index] += (target - displayedLevels[index]) * (1 - exp(-elapsed / 0.015))
-            bar.bounds.size.height = 3 + CGFloat(displayedLevels[index]) * (bounds.height - 3)
+            bar.bounds.size.height = barHeight(displayedLevels[index], at: index)
         }
         CATransaction.commit()
     }

@@ -34,7 +34,7 @@ final class PillSettingsView: NSView {
     private func buildUI() {
         let title = NSTextField(labelWithString: "Recording pill")
         title.font = .systemFont(ofSize: 17, weight: .semibold)
-        let description = NSTextField(wrappingLabelWithString: "Tune the waveform to your voice. Changes are saved automatically and apply while recording.")
+        let description = NSTextField(wrappingLabelWithString: "Tune the waveform to your voice. Settings are saved on this Mac across app updates and apply while recording.")
         description.font = .systemFont(ofSize: 12)
         description.textColor = .secondaryLabelColor
 
