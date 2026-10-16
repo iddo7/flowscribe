@@ -371,7 +371,6 @@ private final class HUDEffectView: NSVisualEffectView {
 /// A scrolling history of measured audio, shared by the HUD and the labeled Settings preview.
 final class WaveformView: NSView {
     private var bars: [CALayer] = []
-    private let edgeFade = CAGradientLayer()
     private var timer: Timer?
     private var settings = PillSettings(defaults: nil)
     private var history = WaveformHistory()
@@ -383,12 +382,6 @@ final class WaveformView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.masksToBounds = false
-        edgeFade.startPoint = CGPoint(x: 0, y: 0.5)
-        edgeFade.endPoint = CGPoint(x: 1, y: 0.5)
-        edgeFade.colors = [NSColor.clear.cgColor, NSColor.black.cgColor,
-                           NSColor.black.cgColor, NSColor.clear.cgColor]
-        edgeFade.locations = [0, 0.2, 0.8, 1]
-        layer?.mask = edgeFade
         configure(settings)
     }
 
@@ -415,7 +408,6 @@ final class WaveformView: NSView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        edgeFade.frame = bounds
         let spacing = bounds.width / CGFloat(bars.count)
         let width = min(3, spacing * 0.55)
         for (index, bar) in bars.enumerated() {
