@@ -42,7 +42,7 @@ A crucial gotcha: **an app launched from Finder, Spotlight, or `open` does not s
 - Menu-bar-only app (`LSUIElement`) — no Dock icon.
 - Hold **⌃⌥Space** to record; release it to transcribe (Carbon global hotkey).
 - States: **idle → recording → transcribing → idle**. Input during transcription is ignored.
-- The text-free 68×32 HUD uses native Liquid Glass on macOS 26 and an AppKit material fallback on earlier versions. Five appearance-aware voice bars animate while recording, switch to a rotating processing ring while transcribing, then resolve to a brief green check.
+- The text-free 68×32 HUD uses native Liquid Glass on macOS 26 and an AppKit material fallback on earlier versions. Five appearance-aware voice bars follow the actual recorded microphone volume, settling during silence. They switch to a rotating processing ring while transcribing, then resolve to a brief green check.
 - The pill defaults to bottom-center on the active display. Settings offers top/bottom left, center, and right presets, plus **Near Typing** to follow the focused caret or input field.
 - Audio is captured via `AVAudioEngine`, converted to 16 kHz mono 16-bit PCM in memory, written to a **unique temporary WAV** only when you stop, uploaded, then **deleted immediately** — success, failure, cancellation, or quit.
 - Microphone changes rebuild the audio engine and converter while retaining audio already captured. Audio start/stop work runs off the UI thread so hotkey release can update the recording pill immediately.

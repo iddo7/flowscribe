@@ -52,6 +52,10 @@ final class HUDController {
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
+    func updateAudioLevel(_ level: Double) {
+        waveformView?.updateAudioLevel(level)
+    }
+
     func show(state: AppState, near anchor: CGRect?) {
         cancelScheduledHide()
         anchorRect = anchor
@@ -328,15 +332,19 @@ private final class HUDEffectView: NSVisualEffectView {
     }
 }
 
-/// Five appearance-aware bars with deliberately uneven phases, giving the pill an organic voice meter.
+/// Five bars follow recent measured microphone levels, with fast attack and a softer release.
 private final class WaveformView: NSView {
     private let bars: [CALayer]
+    private var timer: Timer?
+    private var targetLevels = [Double](repeating: 0, count: 5)
+    private var displayedLevels = [Double](repeating: 0, count: 5)
+    private var lastAudioTime: CFTimeInterval = 0
+    private var lastFrameTime: CFTimeInterval = 0
 
     override init(frame frameRect: NSRect) {
-        let heights: [CGFloat] = [7, 12, 17, 11, 7]
-        bars = heights.map { height in
+        bars = (0..<5).map { _ in
             let bar = CALayer()
-            bar.bounds = CGRect(x: 0, y: 0, width: 3, height: height)
+            bar.bounds = CGRect(x: 0, y: 0, width: 3, height: 3)
             bar.cornerRadius = 1.5
             return bar
         }
@@ -376,33 +384,55 @@ private final class WaveformView: NSView {
     }
 
     func startAnimating() {
-        let patterns: [[CGFloat]] = [
-            [0.44, 0.92, 0.58, 1, 0.44],
-            [0.52, 1, 0.68, 0.4, 0.52],
-            [0.38, 0.7, 1, 0.62, 0.38],
-            [0.5, 0.88, 0.46, 1, 0.5],
-            [0.42, 1, 0.56, 0.78, 0.42],
-        ]
-
-        for (index, bar) in bars.enumerated() {
-            bar.removeAnimation(forKey: "voice")
-            let animation = CAKeyframeAnimation(keyPath: "transform.scale.y")
-            animation.values = patterns[index]
-            animation.keyTimes = [0, 0.22, 0.48, 0.74, 1]
-            animation.duration = 0.78 + Double(index % 3) * 0.08
-            animation.beginTime = CACurrentMediaTime() + Double(index) * 0.055
-            animation.repeatCount = .infinity
-            animation.isRemovedOnCompletion = false
-            animation.timingFunctions = Array(
-                repeating: CAMediaTimingFunction(name: .easeInEaseOut),
-                count: 4
-            )
-            bar.add(animation, forKey: "voice")
+        guard timer == nil else { return }
+        lastFrameTime = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.advanceFrame() }
         }
+        self.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func updateAudioLevel(_ level: Double) {
+        guard timer != nil else { return }
+        targetLevels.removeFirst()
+        targetLevels.append(min(1, max(0, level)))
+        lastAudioTime = CACurrentMediaTime()
+    }
+
+    private func advanceFrame() {
+        guard timer != nil else { return }
+        let now = CACurrentMediaTime()
+        let elapsed = min(0.1, max(0, now - lastFrameTime))
+        lastFrameTime = now
+        // A stalled or disconnected input must not leave the bars frozen at a loud level.
+        if now - lastAudioTime > 0.15 {
+            targetLevels = [Double](repeating: 0, count: bars.count)
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, bar) in bars.enumerated() {
+            let target = targetLevels[index]
+            let timeConstant = target > displayedLevels[index] ? 0.035 : 0.12
+            displayedLevels[index] += (target - displayedLevels[index]) * (1 - exp(-elapsed / timeConstant))
+            bar.bounds.size.height = 3 + CGFloat(displayedLevels[index]) * (bounds.height - 3)
+        }
+        CATransaction.commit()
     }
 
     func stopAnimating() {
-        bars.forEach { $0.removeAllAnimations() }
+        timer?.invalidate()
+        timer = nil
+        lastAudioTime = 0
+        targetLevels = [Double](repeating: 0, count: bars.count)
+        displayedLevels = targetLevels
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        bars.forEach {
+            $0.removeAllAnimations()
+            $0.bounds.size.height = 3
+        }
+        CATransaction.commit()
     }
 }
 

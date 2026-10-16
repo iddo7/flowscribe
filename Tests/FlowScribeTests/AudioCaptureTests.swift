@@ -5,6 +5,39 @@ final class AudioCaptureTests: XCTestCase {
     private let builtIn = AudioInputDevice(id: 1, uid: "built-in", name: "Built-in")
     private let headset = AudioInputDevice(id: 2, uid: "headset", name: "Headset")
 
+    func testAudioLevelsFollowCapturedPCMOnMainQueue() throws {
+        let engine = FakeCaptureEngine(pcm: Data(repeating: 0, count: 640))
+        let capture = AudioCapture(resolveDevice: { self.builtIn }, makeEngine: { engine },
+                                   observeDeviceChanges: false)
+        let session = UUID()
+        let silence = expectation(description: "silent microphone")
+        capture.onAudioLevel = { receivedSession, level in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertEqual(receivedSession, session)
+            XCTAssertEqual(level, 0)
+            silence.fulfill()
+        }
+        start(capture, session: session)
+        wait(for: [silence], timeout: 3)
+
+        let loud = expectation(description: "loud microphone")
+        capture.onAudioLevel = { receivedSession, level in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertEqual(receivedSession, session)
+            XCTAssertEqual(level, 1)
+            loud.fulfill()
+        }
+        engine.onPCM?(Data(repeating: 127, count: 640))
+        wait(for: [loud], timeout: 3)
+        XCTAssertNil(try stop(capture, session: session))
+
+        let late = expectation(description: "retired microphone must not update the HUD")
+        late.isInverted = true
+        capture.onAudioLevel = { _, _ in late.fulfill() }
+        engine.onPCM?(Data(repeating: 127, count: 640))
+        wait(for: [late], timeout: 0.05)
+    }
+
     func testRouteChangeRebuildsEngineAndPreservesAudio() throws {
         let source = DeviceSource(headset)
         let first = FakeCaptureEngine(pcm: Data(repeating: 1, count: 6_000))

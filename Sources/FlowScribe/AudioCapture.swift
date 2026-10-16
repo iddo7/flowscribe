@@ -23,6 +23,9 @@ final class AudioCapture {
     /// Delivered on the main queue, with the session identity to ignore stale failures.
     var onFailure: ((UUID, Error) -> Void)?
 
+    /// Normalized microphone level, delivered on the main queue for the active stream only.
+    var onAudioLevel: ((UUID, Double) -> Void)?
+
     init(resolveDevice: @escaping () -> AudioInputDevice? = { AudioInputDevices.shared.selectedDevice() },
          makeEngine: @escaping () -> AudioCaptureEngine = { MicrophoneCaptureEngine() },
          observeDeviceChanges: Bool = true) {
@@ -97,14 +100,20 @@ final class AudioCapture {
         guard let selected = resolveDevice() else {
             throw CaptureError(message: "No microphone is available. Connect a microphone or choose another input in FlowScribe Settings.")
         }
-        guard let buffer else { return }
+        guard let buffer, let sessionID else { return }
         let streamID = UUID()
         let engine = makeEngine()
         self.streamID = streamID
         self.engine = engine
         self.device = selected
         buffer.activate(streamID: streamID)
-        try engine.start(deviceID: selected.id, onPCM: { buffer.append($0, streamID: streamID) }, onConfigurationChange: { [weak self] in
+        try engine.start(deviceID: selected.id, onPCM: { [weak self] data in
+            guard let level = buffer.append(data, streamID: streamID) else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard buffer.isActive(streamID: streamID) else { return }
+                self?.onAudioLevel?(sessionID, level)
+            }
+        }, onConfigurationChange: { [weak self] in
             // Queue teardown away from the hardware notification callback.
             self?.queue.async { [weak self] in
                 guard let self, self.streamID == streamID else { return }
@@ -163,18 +172,28 @@ final class RecordingPCMBuffer {
     private var pcm = Data()
     private var isClosed = false
     private var streamID: UUID?
+    private var levelMeter = PCMLevelMeter()
 
     func activate(streamID: UUID?) {
         lock.lock()
         defer { lock.unlock() }
         self.streamID = streamID
+        levelMeter = PCMLevelMeter()
     }
 
-    func append(_ data: Data, streamID: UUID) {
+    func isActive(streamID: UUID) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard !isClosed, self.streamID == streamID else { return }
+        return !isClosed && self.streamID == streamID
+    }
+
+    @discardableResult
+    func append(_ data: Data, streamID: UUID) -> Double? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isClosed, self.streamID == streamID else { return nil }
         pcm.append(data)
+        return levelMeter.consume(data)
     }
 
     func finish() -> Data {
