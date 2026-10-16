@@ -11,20 +11,21 @@ final class AudioCaptureTests: XCTestCase {
                                    observeDeviceChanges: false)
         let session = UUID()
         let silence = expectation(description: "silent microphone")
-        capture.onAudioLevel = { receivedSession, level in
+        capture.onAudioLevels = { receivedSession, levels in
             XCTAssertTrue(Thread.isMainThread)
             XCTAssertEqual(receivedSession, session)
-            XCTAssertEqual(level, 0)
+            XCTAssertEqual(levels, [0])
             silence.fulfill()
         }
         start(capture, session: session)
         wait(for: [silence], timeout: 3)
 
         let loud = expectation(description: "loud microphone")
-        capture.onAudioLevel = { receivedSession, level in
+        capture.onAudioLevels = { receivedSession, levels in
             XCTAssertTrue(Thread.isMainThread)
             XCTAssertEqual(receivedSession, session)
-            XCTAssertEqual(level, 1)
+            XCTAssertEqual(levels.count, 1)
+            XCTAssertGreaterThan(levels[0], 0.99)
             loud.fulfill()
         }
         engine.onPCM?(Data(repeating: 127, count: 640))
@@ -33,7 +34,7 @@ final class AudioCaptureTests: XCTestCase {
 
         let late = expectation(description: "retired microphone must not update the HUD")
         late.isInverted = true
-        capture.onAudioLevel = { _, _ in late.fulfill() }
+        capture.onAudioLevels = { _, _ in late.fulfill() }
         engine.onPCM?(Data(repeating: 127, count: 640))
         wait(for: [late], timeout: 0.05)
     }

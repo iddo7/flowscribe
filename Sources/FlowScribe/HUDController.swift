@@ -41,7 +41,10 @@ enum HUDPosition: String, CaseIterable {
 /// A compact, non-activating waveform pill with a user-selected screen position.
 @MainActor
 final class HUDController {
-    private let panelSize = NSSize(width: 68, height: 32)
+    private var settings = PillSettings()
+    private var panelSize: NSSize {
+        NSSize(width: settings[.width], height: settings[.height])
+    }
     private var panel: NSPanel?
     private var waveformView: WaveformView?
     private var processingView: ProcessingView?
@@ -49,11 +52,23 @@ final class HUDController {
     private weak var effectView: NSView?
     private var scheduledHide: DispatchWorkItem?
     private var anchorRect: CGRect?
+    private var settingsObserver: NSObjectProtocol?
+
+    init() {
+        settingsObserver = NotificationCenter.default.addObserver(forName: PillSettings.didChange,
+                                                                 object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshSettings() }
+        }
+    }
+
+    deinit {
+        if let settingsObserver { NotificationCenter.default.removeObserver(settingsObserver) }
+    }
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
-    func updateAudioLevel(_ level: Double) {
-        waveformView?.updateAudioLevel(level)
+    func updateAudioLevels(_ levels: [Double]) {
+        waveformView?.updateAudioLevels(levels)
     }
 
     func show(state: AppState, near anchor: CGRect?) {
@@ -145,17 +160,20 @@ final class HUDController {
         }
         effectView = background
 
-        let waveform = WaveformView(frame: NSRect(x: 15, y: 7, width: 38, height: 18))
+        let waveform = WaveformView(frame: content.bounds.insetBy(dx: 14, dy: 7))
+        waveform.configure(settings)
         waveform.autoresizingMask = []
         content.addSubview(waveform)
         waveformView = waveform
 
-        let processing = ProcessingView(frame: NSRect(x: 25, y: 7, width: 18, height: 18))
+        let symbolFrame = NSRect(x: (panelSize.width - 18) / 2, y: (panelSize.height - 18) / 2,
+                                 width: 18, height: 18)
+        let processing = ProcessingView(frame: symbolFrame)
         processing.isHidden = true
         content.addSubview(processing)
         processingView = processing
 
-        let result = NSImageView(frame: NSRect(x: 25, y: 7, width: 18, height: 18))
+        let result = NSImageView(frame: symbolFrame)
         result.imageScaling = .scaleProportionallyDown
         result.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .bold)
         result.isHidden = true
@@ -165,6 +183,24 @@ final class HUDController {
         panel.contentView = background
         self.panel = panel
         return panel
+    }
+
+    private func refreshSettings() {
+        settings = PillSettings()
+        guard let panel else { return }
+        panel.setContentSize(panelSize)
+        waveformView?.frame = NSRect(origin: .zero, size: panelSize).insetBy(dx: 14, dy: 7)
+        waveformView?.configure(settings)
+        let symbolFrame = NSRect(x: (panelSize.width - 18) / 2, y: (panelSize.height - 18) / 2,
+                                 width: 18, height: 18)
+        processingView?.frame = symbolFrame
+        resultView?.frame = symbolFrame
+        if #available(macOS 26.0, *), let glass = effectView as? NSGlassEffectView {
+            glass.cornerRadius = panelSize.height / 2
+        } else {
+            effectView?.layer?.cornerRadius = panelSize.height / 2
+        }
+        if panel.isVisible { position(panel, near: anchorRect) }
     }
 
     private func apply(state: AppState) {
@@ -332,38 +368,55 @@ private final class HUDEffectView: NSVisualEffectView {
     }
 }
 
-/// Five bars follow recent measured microphone levels, with fast attack and a softer release.
-private final class WaveformView: NSView {
-    private let bars: [CALayer]
+/// A scrolling history of measured audio, shared by the HUD and the labeled Settings preview.
+final class WaveformView: NSView {
+    private var bars: [CALayer] = []
     private var timer: Timer?
-    private var targetLevels = [Double](repeating: 0, count: 5)
-    private var displayedLevels = [Double](repeating: 0, count: 5)
+    private var settings = PillSettings(defaults: nil)
+    private var history = WaveformHistory()
+    private var displayedLevels: [Double] = []
     private var lastAudioTime: CFTimeInterval = 0
     private var lastFrameTime: CFTimeInterval = 0
 
     override init(frame frameRect: NSRect) {
-        bars = (0..<5).map { _ in
-            let bar = CALayer()
-            bar.bounds = CGRect(x: 0, y: 0, width: 3, height: 3)
-            bar.cornerRadius = 1.5
-            return bar
-        }
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.masksToBounds = false
-
-        let spacing: CGFloat = 6
-        let totalWidth = CGFloat(bars.count - 1) * spacing + 3
-        let startX = (frameRect.width - totalWidth) / 2 + 1.5
-        for (index, bar) in bars.enumerated() {
-            bar.position = CGPoint(x: startX + CGFloat(index) * spacing, y: frameRect.height / 2)
-            layer?.addSublayer(bar)
-        }
-        updateColors()
+        configure(settings)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    func configure(_ settings: PillSettings) {
+        self.settings = settings
+        history.configure(settings)
+        if bars.count != Int(settings[.bars]) {
+            bars.forEach { $0.removeFromSuperlayer() }
+            bars = (0..<Int(settings[.bars])).map { _ in
+                let bar = CALayer()
+                layer?.addSublayer(bar)
+                return bar
+            }
+            displayedLevels = history.levels
+        }
+        needsLayout = true
+        updateColors()
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let spacing = bounds.width / CGFloat(bars.count)
+        let width = min(3, spacing * 0.55)
+        for (index, bar) in bars.enumerated() {
+            bar.position = CGPoint(x: (CGFloat(index) + 0.5) * spacing, y: bounds.midY)
+            bar.bounds.size = NSSize(width: width, height: 3 + CGFloat(displayedLevels[index]) * (bounds.height - 3))
+            bar.cornerRadius = width / 2
+        }
+        CATransaction.commit()
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -393,10 +446,9 @@ private final class WaveformView: NSView {
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    func updateAudioLevel(_ level: Double) {
+    func updateAudioLevels(_ levels: [Double]) {
         guard timer != nil else { return }
-        targetLevels.removeFirst()
-        targetLevels.append(min(1, max(0, level)))
+        history.append(levels)
         lastAudioTime = CACurrentMediaTime()
     }
 
@@ -407,14 +459,14 @@ private final class WaveformView: NSView {
         lastFrameTime = now
         // A stalled or disconnected input must not leave the bars frozen at a loud level.
         if now - lastAudioTime > 0.15 {
-            targetLevels = [Double](repeating: 0, count: bars.count)
+            history.reset()
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for (index, bar) in bars.enumerated() {
-            let target = targetLevels[index]
-            let timeConstant = target > displayedLevels[index] ? 0.035 : 0.12
-            displayedLevels[index] += (target - displayedLevels[index]) * (1 - exp(-elapsed / timeConstant))
+            let target = pow(min(1, max(0, history.levels[index])), 1 / settings[.sensitivity])
+            // Brief interpolation smooths frames without washing out neighboring syllables.
+            displayedLevels[index] += (target - displayedLevels[index]) * (1 - exp(-elapsed / 0.015))
             bar.bounds.size.height = 3 + CGFloat(displayedLevels[index]) * (bounds.height - 3)
         }
         CATransaction.commit()
@@ -424,8 +476,8 @@ private final class WaveformView: NSView {
         timer?.invalidate()
         timer = nil
         lastAudioTime = 0
-        targetLevels = [Double](repeating: 0, count: bars.count)
-        displayedLevels = targetLevels
+        history.reset()
+        displayedLevels = history.levels
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         bars.forEach {

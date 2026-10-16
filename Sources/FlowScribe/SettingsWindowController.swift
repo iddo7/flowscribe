@@ -14,11 +14,13 @@ final class SettingsWindowController: NSWindowController {
     private let microphoneTestButton = NSButton(title: "Test microphone", target: nil, action: nil)
     private let microphoneTest = MicrophoneTest()
     private let noticeField = NSTextField(wrappingLabelWithString: "No errors reported. Microphone testing is local; no audio is uploaded.")
+    private let tabs = NSTabView()
+    private let pillSettingsView = PillSettingsView()
 
     var onKeyChanged: (() -> Void)?
 
     convenience init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 465),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 590),
                               styleMask: [.titled, .closable],
                               backing: .buffered,
                               defer: false)
@@ -40,7 +42,25 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func buildUI() {
-        guard let content = window?.contentView else { return }
+        guard let root = window?.contentView else { return }
+        let content = NSView()
+        let general = NSTabViewItem(identifier: "general")
+        general.label = "General"
+        general.view = content
+        let pill = NSTabViewItem(identifier: "pill")
+        pill.label = "Recording pill"
+        pill.view = pillSettingsView
+        tabs.addTabViewItem(general)
+        tabs.addTabViewItem(pill)
+        tabs.delegate = self
+        tabs.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(tabs)
+        NSLayoutConstraint.activate([
+            tabs.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
+            tabs.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            tabs.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            tabs.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
+        ])
 
         keyField.placeholderString = "sk-…"
         keyField.translatesAutoresizingMaskIntoConstraints = false
@@ -276,5 +296,20 @@ final class SettingsWindowController: NSWindowController {
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        updatePillPreview()
+    }
+
+    private func updatePillPreview() {
+        if tabs.selectedTabViewItem?.identifier as? String == "pill", window?.isVisible == true {
+            pillSettingsView.startPreview()
+        } else {
+            pillSettingsView.stopPreview()
+        }
+    }
+}
+
+extension SettingsWindowController: NSTabViewDelegate {
+    func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        updatePillPreview()
     }
 }

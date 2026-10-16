@@ -7,9 +7,9 @@ struct PCMLevelMeter {
     private var sampleCount = 0
     private var sumOfSquares = 0.0
 
-    /// Returns the strongest completed window, or nil until a full window is captured.
-    mutating func consume(_ pcm: Data) -> Double? {
-        var level: Double?
+    /// Preserve every completed window, including dips within a large hardware callback.
+    mutating func consume(_ pcm: Data) -> [Double] {
+        var levels: [Double] = []
         pcm.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
             for offset in stride(from: 0, to: bytes.count - bytes.count % 2, by: 2) {
                 let bits = UInt16(bytes[offset]) | UInt16(bytes[offset + 1]) << 8
@@ -18,15 +18,15 @@ struct PCMLevelMeter {
                 sampleCount += 1
                 if sampleCount == samplesPerWindow {
                     let rms = sqrt(sumOfSquares / Double(samplesPerWindow))
-                    // A fixed dB range leaves quiet rooms still and makes ordinary speech readable.
+                    // Reserve full height for full-scale audio; ordinary speech needs headroom.
                     let decibels = 20 * log10(max(rms, 0.000_001))
-                    let normalized = min(1, max(0, (decibels + 55) / 45))
-                    level = max(level ?? 0, normalized)
+                    let normalized = min(1, max(0, (decibels + 55) / 55))
+                    levels.append(pow(normalized, 1.8))
                     sampleCount = 0
                     sumOfSquares = 0
                 }
             }
         }
-        return level
+        return levels
     }
 }

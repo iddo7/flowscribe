@@ -29,10 +29,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, self.captureSessionID == sessionID else { return }
             self.handleCaptureFailure(error)
         }
-        capture.onAudioLevel = { [weak self] sessionID, level in
+        capture.onAudioLevels = { [weak self] sessionID, levels in
             guard let self, self.captureSessionID == sessionID,
                   self.stateMachine.state == .recording else { return }
-            self.hud.updateAudioLevel(level)
+            self.hud.updateAudioLevels(levels)
         }
         hotKeys.onPress = { [weak self] in self?.handleHotKeyPressed() }
         hotKeys.onRelease = { [weak self] in self?.handleHotKeyReleased() }

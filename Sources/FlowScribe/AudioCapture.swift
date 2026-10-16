@@ -23,8 +23,8 @@ final class AudioCapture {
     /// Delivered on the main queue, with the session identity to ignore stale failures.
     var onFailure: ((UUID, Error) -> Void)?
 
-    /// Normalized microphone level, delivered on the main queue for the active stream only.
-    var onAudioLevel: ((UUID, Double) -> Void)?
+    /// Ordered 20 ms microphone levels, delivered on the main queue for the active stream only.
+    var onAudioLevels: ((UUID, [Double]) -> Void)?
 
     init(resolveDevice: @escaping () -> AudioInputDevice? = { AudioInputDevices.shared.selectedDevice() },
          makeEngine: @escaping () -> AudioCaptureEngine = { MicrophoneCaptureEngine() },
@@ -108,10 +108,11 @@ final class AudioCapture {
         self.device = selected
         buffer.activate(streamID: streamID)
         try engine.start(deviceID: selected.id, onPCM: { [weak self] data in
-            guard let level = buffer.append(data, streamID: streamID) else { return }
+            let levels = buffer.append(data, streamID: streamID)
+            guard !levels.isEmpty else { return }
             DispatchQueue.main.async { [weak self] in
                 guard buffer.isActive(streamID: streamID) else { return }
-                self?.onAudioLevel?(sessionID, level)
+                self?.onAudioLevels?(sessionID, levels)
             }
         }, onConfigurationChange: { [weak self] in
             // Queue teardown away from the hardware notification callback.
@@ -188,10 +189,10 @@ final class RecordingPCMBuffer {
     }
 
     @discardableResult
-    func append(_ data: Data, streamID: UUID) -> Double? {
+    func append(_ data: Data, streamID: UUID) -> [Double] {
         lock.lock()
         defer { lock.unlock() }
-        guard !isClosed, self.streamID == streamID else { return nil }
+        guard !isClosed, self.streamID == streamID else { return [] }
         pcm.append(data)
         return levelMeter.consume(data)
     }
