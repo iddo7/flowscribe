@@ -58,7 +58,7 @@ The hotkey manager emits distinct press and release edges: press starts from idl
 - API key never logged; request headers never logged; transcript never logged. Error messages carry only coarse causes.
 - Key stored in Keychain with `kSecAttrAccessibleWhenUnlocked`; env var overrides Keychain (documented precedence).
 - Temp WAV: unique filename (`flowscribe-<UUID>.wav`), mode `0600`, deleted in a `defer`-like path after the API call regardless of outcome; also cleaned on quit.
-- Clipboard is snapshotted before transcript install and restored after a short paste-consumption delay, unless the user or another app replaced it in the meantime. Clipboard fallback intentionally keeps the transcript available.
+- Clipboard is snapshotted before transcript install and restored after a short paste-consumption delay only when the target app has a focused text input and ⌘V was synthesized. A per-delivery pasteboard change count prevents restoration over newer copies or transcriptions. Clipboard fallback intentionally keeps the transcript available.
 - TLS-only endpoint; ATS defaults apply.
 
 ## 5. Failure handling
@@ -78,11 +78,12 @@ The hotkey manager emits distinct press and release edges: press starts from idl
 | HTTP 401/403/429/other | Status plus short server-provided reason when safely extractable |
 | Unparseable response | "Unexpected response" notice; temp file still deleted |
 | Accessibility untrusted | Clipboard fallback + notice; ⌘V never synthesized |
+| No focused text input / target app unavailable | Clipboard fallback + copied success notice; no clipboard restoration or ⌘V |
 | CGEvent send fails | Clipboard fallback message |
 
 ## 6. Testing strategy
 
-Unit tests cover **pure logic only** (no audio hardware, no network, no real Keychain writes):
+Unit tests avoid audio hardware, network requests, real Keychain writes, and the user's general clipboard:
 
 - WAV header byte-level layout and finalize rewrites (`WAVHeaderTests`).
 - Multipart framing, unique boundaries, verbatim file bytes, optional language field (`MultipartBodyTests`).
@@ -91,6 +92,7 @@ Unit tests cover **pure logic only** (no audio hardware, no network, no real Key
 - Capture lifecycle with fake engines: route/format changes, retained PCM, background start/stop, stop during startup, failed restart/start, retired callbacks (`AudioCaptureTests`).
 - Model resolution incl. override/blank/trim, too-short detection at boundaries, response parsing (`TranscriptionSupportTests`).
 - Env key resolution hermetically via injected environment; constants pinned (`APIKeyStoreTests`).
+- Paste delivery with a private pasteboard and injected activation/focus/keystroke handlers: no-input and permission fallbacks, automatic-paste restoration, failed keystrokes, and newer clipboard writes/transcriptions (`PasteControllerTests`).
 
 Manual/integration checks live in the README (permissions, paste behavior).
 

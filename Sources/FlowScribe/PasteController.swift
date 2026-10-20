@@ -2,8 +2,8 @@ import AppKit
 
 /// Delivers the transcript to the app the user was using when they started recording.
 /// Strategy: save clipboard, install transcript, reactivate the remembered frontmost
-/// app, synthesize Cmd+V (only when Accessibility is trusted), then restore clipboard.
-/// If Accessibility is unavailable, falls back to clipboard-only and notifies the user.
+/// app, synthesize Cmd+V when a text input is focused, then restore clipboard.
+/// Without Accessibility or a focused input, keeps the transcript on the clipboard.
 final class PasteController {
 
     struct Target {
@@ -22,17 +22,24 @@ final class PasteController {
 
     private let accessibilityChecker: () -> Bool
     private let pasteboard: NSPasteboard
+    private let activateTarget: (Deliverable) -> Bool
+    private let focusedInputChecker: (Deliverable) -> Bool
+    private let pasteKeystrokeSender: () -> Bool
     /// Delay before synthesizing paste so the target app finishes activating.
     var activationDelay: TimeInterval = 0.15
     /// Gives the target app time to consume the pasteboard before restoration.
     var clipboardRestoreDelay: TimeInterval = 0.35
-    /// What we last installed on the clipboard, for change detection.
-    private var installedTranscript: String?
 
     init(accessibilityChecker: @escaping () -> Bool = { Permissions.isAccessibilityTrusted() },
-         pasteboard: NSPasteboard = .general) {
+         pasteboard: NSPasteboard = .general,
+         activateTarget: @escaping (Deliverable) -> Bool = { PasteController.activateTarget($0) },
+         focusedInputChecker: @escaping (Deliverable) -> Bool = { PasteController.hasFocusedTextInput(for: $0) },
+         pasteKeystrokeSender: @escaping () -> Bool = { PasteController.sendPasteKeystroke() }) {
         self.accessibilityChecker = accessibilityChecker
         self.pasteboard = pasteboard
+        self.activateTarget = activateTarget
+        self.focusedInputChecker = focusedInputChecker
+        self.pasteKeystrokeSender = pasteKeystrokeSender
     }
 
     /// Captures the current app and, when Accessibility permits, the focused
@@ -49,14 +56,7 @@ final class PasteController {
     private static func focusedInputRect() -> CGRect? {
         guard AXIsProcessTrusted() else { return nil }
 
-        let systemWide = AXUIElementCreateSystemWide()
-        var focusedValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            systemWide,
-            kAXFocusedUIElementAttribute as CFString,
-            &focusedValue
-        ) == .success, let focusedValue else { return nil }
-        let focused = focusedValue as! AXUIElement
+        guard let focused = focusedElement() else { return nil }
 
         if let caretRect = selectedTextBounds(of: focused), isUsable(caretRect) {
             return convertAXToAppKit(caretRect)
@@ -124,9 +124,69 @@ final class PasteController {
         rect.width >= 0 && rect.height > 0
     }
 
+    private static func focusedElement() -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            AXUIElementCreateSystemWide(),
+            kAXFocusedUIElementAttribute as CFString,
+            &value
+        ) == .success, let value,
+              CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return (value as! AXUIElement)
+    }
+
+    private static func activateTarget(_ deliverable: Deliverable) -> Bool {
+        let running: NSRunningApplication?
+        if let bundleID = deliverable.targetBundleID {
+            running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
+        } else if let name = deliverable.targetLocalizedName {
+            running = NSWorkspace.shared.runningApplications.first { $0.localizedName == name }
+        } else {
+            running = nil
+        }
+        // macOS 13 API: activate(options:) (activate() is 14+).
+        return running?.activate(options: [.activateIgnoringOtherApps]) ?? false
+    }
+
+    private static func hasFocusedTextInput(for deliverable: Deliverable) -> Bool {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return false }
+        if let bundleID = deliverable.targetBundleID {
+            guard app.bundleIdentifier == bundleID else { return false }
+        } else {
+            guard let name = deliverable.targetLocalizedName,
+                  app.localizedName == name else { return false }
+        }
+        guard let focused = focusedElement() else { return false }
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(focused, &pid) == .success,
+              pid == app.processIdentifier else { return false }
+
+        var enabled: CFTypeRef?
+        if AXUIElementCopyAttributeValue(focused, kAXEnabledAttribute as CFString, &enabled) == .success,
+           (enabled as? NSNumber)?.boolValue == false { return false }
+
+        // Geometry alone also matches buttons, windows and web pages. Require
+        // a text-input role or writable selected text for custom editors.
+        var role: CFTypeRef?
+        if AXUIElementCopyAttributeValue(focused, kAXRoleAttribute as CFString, &role) == .success,
+           let role = role as? String,
+           [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role) {
+            return true
+        }
+        var settable = DarwinBoolean(false)
+        return AXUIElementIsAttributeSettable(
+            focused, kAXSelectedTextAttribute as CFString, &settable
+        ) == .success && settable.boolValue
+    }
+
+    enum ClipboardOnlyReason {
+        case accessibilityUnavailable
+        case noFocusedInput
+    }
+
     enum DeliveryResult {
         case pasted            // Cmd+V into the remembered app
-        case clipboardOnly     // Accessibility not trusted; text is on the clipboard
+        case clipboardOnly(ClipboardOnlyReason)
         case failed(String)
     }
 
@@ -141,45 +201,47 @@ final class PasteController {
         } ?? []
 
         pasteboard.clearContents()
-        pasteboard.setString(deliverable.text, forType: .string)
-        installedTranscript = deliverable.text
+        guard pasteboard.setString(deliverable.text, forType: .string) else {
+            completion(.failed("Could not copy the transcript to the clipboard."))
+            return
+        }
+        let installedChangeCount = pasteboard.changeCount
 
         guard accessibilityChecker() else {
-            completion(.clipboardOnly)
+            completion(.clipboardOnly(.accessibilityUnavailable))
             return
         }
 
-        let activate: () -> Void = {
-            let byBundleID = deliverable.targetBundleID.flatMap {
-                NSRunningApplication.runningApplications(withBundleIdentifier: $0).first
-            }
-            let byName = deliverable.targetLocalizedName.flatMap { targetName in
-                NSWorkspace.shared.runningApplications.first { $0.localizedName == targetName }
-            }
-            let running = byBundleID ?? byName
-            if let running {
-                // macOS 13 API: activate(options:) (activate() is 14+).
-                running.activate(options: [.activateIgnoringOtherApps])
-            }
+        guard activateTarget(deliverable) else {
+            completion(.clipboardOnly(.noFocusedInput))
+            return
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + activationDelay) { [weak self] in
             guard let self else { return }
-            let ok = self.sendPasteKeystroke()
+            guard self.pasteboard.changeCount == installedChangeCount else {
+                completion(.failed("The clipboard changed before automatic paste. Please transcribe again."))
+                return
+            }
+            // Recheck after activation: focus can change while transcribing.
+            guard self.focusedInputChecker(deliverable) else {
+                completion(.clipboardOnly(.noFocusedInput))
+                return
+            }
+            let ok = self.pasteKeystrokeSender()
             if ok {
                 DispatchQueue.main.asyncAfter(deadline: .now() + self.clipboardRestoreDelay) {
-                    self.restoreClipboardIfNeeded(savedItems: savedItems)
+                    self.restoreClipboardIfNeeded(savedItems: savedItems, installedChangeCount: installedChangeCount)
                     completion(.pasted)
                 }
             } else {
                 completion(.failed("Could not synthesize the paste keystroke. The transcript is on your clipboard (⌘V to paste manually)."))
             }
         }
-        activate()
     }
 
     /// Synthesizes Command+V via CGEvent. Requires Accessibility trust.
-    func sendPasteKeystroke() -> Bool {
+    private static func sendPasteKeystroke() -> Bool {
         let src = CGEventSource(stateID: .combinedSessionState)
         guard let down = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
               let up = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false) else { return false }
@@ -190,12 +252,11 @@ final class PasteController {
         return true
     }
 
-    /// Restores prior clipboard contents unless something else already replaced
-    /// our transcript (i.e. the current clipboard no longer matches what we wrote).
-    private func restoreClipboardIfNeeded(savedItems: [[NSPasteboard.PasteboardType: Data]]) {
-        guard let installed = installedTranscript else { return }
-        installedTranscript = nil
-        if pasteboard.string(forType: .string) != installed { return } // user wrote to it meanwhile
+    /// A per-delivery change count also protects newer transcriptions and copies
+    /// of identical text from an older delivery's delayed restoration.
+    private func restoreClipboardIfNeeded(savedItems: [[NSPasteboard.PasteboardType: Data]],
+                                          installedChangeCount: Int) {
+        guard pasteboard.changeCount == installedChangeCount else { return }
         guard !savedItems.isEmpty else { return }
         pasteboard.clearContents()
         let restoredItems = savedItems.map { item in

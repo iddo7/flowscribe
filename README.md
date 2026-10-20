@@ -47,7 +47,7 @@ A crucial gotcha: **an app launched from Finder, Spotlight, or `open` does not s
 - **Settings → Recording pill** adjusts width, height, number of bars, scroll speed, and sensitivity. Changes are saved automatically on your Mac and survive app restarts, rebuilds, and reinstalls over the existing app. They apply immediately, including while recording. The waveform tapers at both ends with uniform opacity. A labeled sample preview animates without opening the microphone; **Restore defaults** resets all five controls. Lower sensitivity if the waveform looks too flat, or increase scroll speed to show a shorter slice of audio. These controls only affect the display, never the recording or transcription.
 - Audio is captured via `AVAudioEngine`, converted to 16 kHz mono 16-bit PCM in memory, written to a **unique temporary WAV** only when you stop, uploaded, then **deleted immediately** — success, failure, cancellation, or quit.
 - Microphone changes rebuild the audio engine and converter while retaining audio already captured. Audio start/stop work runs off the UI thread so hotkey release can update the recording pill immediately.
-- Transcript delivery: the app remembers your frontmost application when recording starts, copies the transcript to the clipboard, reactivates that app, and synthesizes **⌘V** — then restores your original clipboard.
+- Transcript delivery: the app remembers your frontmost application when recording starts, copies the transcript to the clipboard, reactivates that app, and checks for a focused text input before synthesizing **⌘V** and restoring your original clipboard. With no focused text input (or if the target app is unavailable), the transcript stays on the clipboard for you to paste manually.
 
 ## Microphone selection
 
@@ -93,7 +93,7 @@ security delete-generic-password -s com.flowscribe.app -a openai-api-key
 
 ## Tests
 
-Pure-logic unit tests (WAV header correctness, multipart framing, state-machine transitions, model resolution, too-short detection, response parsing, env key resolution):
+Unit tests cover WAV headers, multipart framing, state transitions, audio capture with fake engines, transcription support, settings, and clipboard delivery. Paste tests use a private pasteboard and injected activation/focus/keystroke handlers, without touching your clipboard or other apps.
 
 ```bash
 swift test
@@ -105,13 +105,15 @@ swift test
 - **Recording fails immediately** — Microphone permission not granted; open System Settings → Privacy & Security → Microphone.
 - **Wrong microphone / input disconnected** — check Settings → Microphone. System Default follows macOS; a specific selection overrides it. The device list refreshes as microphones connect or disconnect.
 - **Immediate `!` after release** — open Settings with ⌃⌥, and read Latest message. Use Test microphone to distinguish an input failure from an API/key/network error.
-- **"Transcript copied" notice appears instead of pasting** — Accessibility is missing or stale. Quit FlowScribe, run `tccutil reset Accessibility com.flowscribe.app`, relaunch it, and grant the fresh prompt. `scripts/install.sh` bundle-signs the app with a stable designated requirement so future rebuilds retain the correct identity.
+- **"Transcript copied" notice appears instead of pasting** — with no focused text input, this is expected: click a text field and press **⌘V**. If the notice asks for Accessibility access, permission is missing or stale. Quit FlowScribe, run `tccutil reset Accessibility com.flowscribe.app`, relaunch it, and grant the fresh prompt. `scripts/install.sh` bundle-signs the app with a stable designated requirement so future rebuilds retain the correct identity.
 - **HTTP 401** — key invalid. HTTP 403 — key lacks access to the model. HTTP 429 — rate-limited; wait.
 - **No text / "too short"** — recordings under ~0.3 s are discarded without an API call.
 - **Key works in terminal but app says no key** — Finder didn't inherit your env (see above); use the Settings window.
 - **Stuck on "Transcribing…"** — requests time out after 60 s and the state machine resets automatically; check connectivity.
 
 To check microphone switching on your hardware, hold the shortcut and speak, unplug the headset or change the default input in macOS, continue speaking, then release. The pill should leave recording immediately and transcribe the captured audio. Also check a manually selected microphone while changing the macOS default, and disconnect/reconnect that selected microphone.
+
+To check clipboard fallback, copy some unrelated text, click the desktop or a non-editable area with no text field focused, then dictate. After the copied notice, click a text field and press **⌘V**: the new transcript should appear. Repeat with an empty clipboard, then dictate directly into a focused text field to check automatic paste and restoration of the previous clipboard.
 
 ## Uninstall
 

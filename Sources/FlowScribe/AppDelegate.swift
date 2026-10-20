@@ -334,7 +334,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch delivery {
         case .pasted:
             hud.showSuccess(near: anchor)
-        case .clipboardOnly:
+        case .clipboardOnly(.noFocusedInput):
+            hud.showSuccess(near: anchor)
+            presentNotice(title: "Transcript copied",
+                          body: "No active text field was available. The transcript is on your clipboard — ⌘V where you want it.")
+        case .clipboardOnly(.accessibilityUnavailable):
             hud.showFailure(near: anchor)
             presentNotice(title: "Transcript copied",
                           body: "Grant FlowScribe Accessibility access to paste automatically. The transcript is on your clipboard — ⌘V where you want it.",
