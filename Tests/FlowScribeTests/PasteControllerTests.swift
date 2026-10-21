@@ -21,6 +21,66 @@ final class PasteControllerTests: XCTestCase {
         super.tearDown()
     }
 
+    func testAppScopedFocusWorksWhenSystemWideFocusIsUnavailable() {
+        let input = AXUIElementCreateApplication(1234)
+        let focused = PasteController.focusedElement(
+            for: 1234,
+            applicationFocus: { pid in
+                XCTAssertEqual(pid, 1234)
+                return input
+            },
+            systemFocus: {
+                XCTFail("A working app-scoped query must not depend on system-wide focus")
+                return nil
+            },
+            elementProcessID: { _ in 1234 }
+        )
+        XCTAssertTrue(focused.map { CFEqual($0, input) } ?? false)
+    }
+
+    func testSystemWideFocusRemainsAvailableForAppsWithoutScopedFocus() {
+        let input = AXUIElementCreateApplication(1234)
+        let focused = PasteController.focusedElement(
+            for: 1234, applicationFocus: { _ in nil }, systemFocus: { input },
+            elementProcessID: { _ in 1234 }
+        )
+        XCTAssertTrue(focused.map { CFEqual($0, input) } ?? false)
+    }
+
+    func testFocusFromAnotherProcessIsRejected() {
+        let otherInput = AXUIElementCreateApplication(5678)
+        let focused = PasteController.focusedElement(
+            for: 1234, applicationFocus: { _ in otherInput }, systemFocus: { otherInput },
+            elementProcessID: { _ in 5678 }
+        )
+        XCTAssertNil(focused)
+    }
+
+    func testInvalidScopedFocusCanFallBackToMatchingSystemFocus() {
+        let otherInput = AXUIElementCreateApplication(5678)
+        let input = AXUIElementCreateApplication(1234)
+        let focused = PasteController.focusedElement(
+            for: 1234, applicationFocus: { _ in otherInput }, systemFocus: { input },
+            elementProcessID: { CFEqual($0, input) ? 1234 : 5678 }
+        )
+        XCTAssertTrue(focused.map { CFEqual($0, input) } ?? false)
+    }
+
+    func testUnavailableFocusOrProcessIdentityIsRejected() {
+        let input = AXUIElementCreateApplication(1234)
+        XCTAssertNil(PasteController.focusedElement(
+            for: 1234, applicationFocus: { _ in nil }, systemFocus: { nil },
+            elementProcessID: { _ in
+                XCTFail("Missing elements have no process to query")
+                return nil
+            }
+        ))
+        XCTAssertNil(PasteController.focusedElement(
+            for: 1234, applicationFocus: { _ in input }, systemFocus: { input },
+            elementProcessID: { _ in nil }
+        ))
+    }
+
     func testNoFocusedInputKeepsTranscriptInsteadOfRestoringPreviousClipboard() {
         pasteboard.setString("Previous clipboard", forType: .string)
         assertClipboardFallback(reason: .noFocusedInput, focusedInput: false)

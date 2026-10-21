@@ -49,14 +49,15 @@ final class PasteController {
         return Target(
             bundleID: app?.bundleIdentifier,
             localizedName: app?.localizedName,
-            anchorRect: focusedInputRect()
+            anchorRect: app.flatMap { focusedInputRect(for: $0) }
         )
     }
 
-    private static func focusedInputRect() -> CGRect? {
+    private static func focusedInputRect(for app: NSRunningApplication) -> CGRect? {
         guard AXIsProcessTrusted() else { return nil }
 
-        guard let focused = focusedElement() else { return nil }
+        guard let focused = focusedElement(for: app.processIdentifier),
+              isTextInput(focused) else { return nil }
 
         if let caretRect = selectedTextBounds(of: focused), isUsable(caretRect) {
             return convertAXToAppKit(caretRect)
@@ -124,10 +125,33 @@ final class PasteController {
         rect.width >= 0 && rect.height > 0
     }
 
-    private static func focusedElement() -> AXUIElement? {
+    /// Electron can return cannotComplete for system-wide focus while its own
+    /// application element still exposes the editor and its geometry. Use the
+    /// same app-scoped lookup for both HUD placement and paste validation.
+    static func focusedElement(
+        for processID: pid_t,
+        applicationFocus: (pid_t) -> AXUIElement? = {
+            focusedElementAttribute(of: AXUIElementCreateApplication($0))
+        },
+        systemFocus: () -> AXUIElement? = {
+            focusedElementAttribute(of: AXUIElementCreateSystemWide())
+        },
+        elementProcessID: (AXUIElement) -> pid_t? = {
+            var pid: pid_t = 0
+            return AXUIElementGetPid($0, &pid) == .success ? pid : nil
+        }
+    ) -> AXUIElement? {
+        if let focused = applicationFocus(processID), elementProcessID(focused) == processID {
+            return focused
+        }
+        guard let focused = systemFocus(), elementProcessID(focused) == processID else { return nil }
+        return focused
+    }
+
+    private static func focusedElementAttribute(of element: AXUIElement) -> AXUIElement? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
-            AXUIElementCreateSystemWide(),
+            element,
             kAXFocusedUIElementAttribute as CFString,
             &value
         ) == .success, let value,
@@ -156,11 +180,11 @@ final class PasteController {
             guard let name = deliverable.targetLocalizedName,
                   app.localizedName == name else { return false }
         }
-        guard let focused = focusedElement() else { return false }
-        var pid: pid_t = 0
-        guard AXUIElementGetPid(focused, &pid) == .success,
-              pid == app.processIdentifier else { return false }
+        guard let focused = focusedElement(for: app.processIdentifier) else { return false }
+        return isTextInput(focused)
+    }
 
+    private static func isTextInput(_ focused: AXUIElement) -> Bool {
         var enabled: CFTypeRef?
         if AXUIElementCopyAttributeValue(focused, kAXEnabledAttribute as CFString, &enabled) == .success,
            (enabled as? NSNumber)?.boolValue == false { return false }
