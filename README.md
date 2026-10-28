@@ -74,6 +74,16 @@ Audio is requested in short segments, with at most one upcoming segment prepared
 
 The ElevenLabs key uses its own Keychain account, `elevenlabs-api-key`, under service `com.flowscribe.app`; it does not replace the OpenAI key. `ELEVENLABS_API_KEY` overrides it when present in the app’s launch environment. Speech requests use `https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-timestamps`; voice discovery uses `/v2/voices`. Selected text is sent to ElevenLabs, subject to its account retention policies. Generated audio is not written to disk or cached on disk by FlowScribe.
 
+## Usage and cost
+
+**Settings → Usage & cost** shows estimated API usage in USD for today, this calendar month, and since tracking started, plus a seven-day chart and monthly totals for ElevenLabs reading and OpenAI dictation. Tracking starts with this version; earlier usage is not reconstructed. Counters persist across app restarts and reinstalls. Only dates, model names, aggregate quantities and estimated amounts are saved locally; text, audio and API keys are not part of the usage history.
+
+Estimates use published API prices checked October 28, 2026: Natural/Expressive reading at $0.08 per 1,000 submitted characters, Fast at $0.04 per 1,000 characters, and the default `gpt-transcribe` dictation at $0.0045 per audio minute. Known legacy transcription models use their documented estimates. **Edit estimate rates…** sets effective rates for future requests; it does not rewrite earlier estimates. Unknown models or unreadable audio durations are identified as unpriced usage rather than silently treated as free. Provider plans, included credits, custom voice surcharges, discounts and taxes can differ from these estimates. Sources: [ElevenLabs API pricing](https://elevenlabs.io/pricing/api), [OpenAI pricing](https://developers.openai.com/api/docs/pricing).
+
+Every successful generation/upload is tracked once, including voice samples and prefetched audio, even if the response cannot be decoded. Replaying cached audio or changing playback speed adds no usage. ElevenLabs’ `character-cost` header supplies reported credits separately from the dollar estimate when available. Cancellations, network failures, server errors and requests still in flight are shown as unconfirmed possible charges outside the confirmed totals; HTTP rejections are excluded.
+
+The separate **ElevenLabs account** section can refresh the account-wide quota, credit reset date and upcoming invoice via `/v1/user/subscription`. This requires **User: Read** permission on the API key. A restricted key can still synthesize speech and track local costs without this permission. Account values include other apps and are never added to FlowScribe’s estimates. OpenAI’s account billing is linked separately; no administrator credential is needed for local tracking.
+
 ## Permissions (System Settings → Privacy & Security)
 
 | Permission | When | If denied |

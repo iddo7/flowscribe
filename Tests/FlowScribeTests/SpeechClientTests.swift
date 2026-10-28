@@ -6,7 +6,7 @@ final class SpeechClientTests: XCTestCase {
         SpeechStubProtocol.handler = handler
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [SpeechStubProtocol.self]
-        return SpeechClient(session: URLSession(configuration: config), keyReader: { "test-key" })
+        return SpeechClient(session: URLSession(configuration: config), keyReader: { "test-key" }, usageStore: UsageStore(defaults: nil))
     }
 
     func testSynthesisSendsLiteralTextAndDecodesAudioAndTiming() async throws {

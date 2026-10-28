@@ -59,11 +59,14 @@ struct SpeechVoice: Decodable {
 }
 
 struct SpeechClient {
+    enum Permission: String { case speech = "Text to Speech", voices = "Voices: Read", account = "User: Read" }
     enum Failure: LocalizedError, Equatable {
+        case permission(Permission)
         case missingKey, invalidVoice, network, invalidResponse, http(Int)
 
         var errorDescription: String? {
             switch self {
+            case .permission(let permission): return "Your ElevenLabs key needs the \(permission.rawValue) permission for this request. You can update its permissions on ElevenLabs."
             case .missingKey: return "Add an ElevenLabs API key in Settings → Read aloud."
             case .invalidVoice: return "Choose a voice in Settings → Read aloud."
             case .network: return "Could not reach ElevenLabs. Check your connection and try again."
@@ -83,6 +86,7 @@ struct SpeechClient {
     }()
     var session: URLSession = privateSession
     var keyReader: () -> String? = { ElevenLabsKeyStore.resolveKey() }
+    var usageStore: UsageStore = .shared
 
     func synthesize(_ text: String, settings: ReaderSettings, previousText: String? = nil,
                     nextText: String? = nil) async throws -> SpeechClip {
@@ -104,7 +108,7 @@ struct SpeechClient {
             body["next_text"] = nextText
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let data = try await send(request)
+        let data = try await send(request, generation: (settings.model.rawValue, Double(text.unicodeScalars.count)))
         struct Response: Decodable {
             let audioBase64: String
             let alignment: SpeechAlignment?
@@ -132,13 +136,22 @@ struct SpeechClient {
         for _ in 0..<20 {
             var path = "v2/voices?page_size=100"
             if let token { path += "&next_page_token=\(token.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")" }
-            let data = try await send(request(path: path))
+            let data = try await send(request(path: path), permission: .voices)
             guard let response = try? decoder.decode(Response.self, from: data) else { throw Failure.invalidResponse }
             voices += response.voices
             guard response.hasMore == true, let next = response.nextPageToken, next != token else { break }
             token = next
         }
         return voices.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    func subscription() async throws -> ElevenLabsSubscription {
+        try Task.checkCancellation()
+        let data = try await send(request(path: "v1/user/subscription"), permission: .account)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let subscription = try? decoder.decode(ElevenLabsSubscription.self, from: data) else { throw Failure.invalidResponse }
+        return subscription
     }
 
     private func request(path: String) throws -> URLRequest {
@@ -150,17 +163,43 @@ struct SpeechClient {
         return request
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
+    private func send(_ request: URLRequest, generation: (model: String, characters: Double)? = nil,
+                      permission: Permission = .speech) async throws -> Data {
+        try Task.checkCancellation()
+        let ticket = generation.map { usageStore.begin(provider: .elevenLabs, model: $0.model, units: $0.characters) }
         let data: Data
         let response: URLResponse
         do { (data, response) = try await session.data(for: request) }
         catch {
+            if let ticket { usageStore.finish(ticket, status: nil) }
             if Task.isCancelled { throw CancellationError() }
             throw Failure.network
         }
+        let http = response as? HTTPURLResponse
+        if let ticket {
+            let credits = http?.value(forHTTPHeaderField: "character-cost").flatMap(Double.init)
+            usageStore.finish(ticket, status: http?.statusCode, reportedCredits: credits)
+        }
         try Task.checkCancellation()
-        guard let http = response as? HTTPURLResponse else { throw Failure.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else { throw Failure.http(http.statusCode) }
+        guard let http else { throw Failure.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            if let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let detail = body["detail"] as? [String: Any], detail["status"] as? String == "missing_permissions" {
+                throw Failure.permission(permission)
+            }
+            throw Failure.http(http.statusCode)
+        }
         return data
     }
+}
+
+/// Account-wide values, deliberately kept separate from FlowScribe's local usage estimate.
+struct ElevenLabsSubscription: Decodable {
+    let tier: String
+    let characterCount: Int
+    let characterLimit: Int
+    let nextCharacterCountResetUnix: Double?
+    let currency: String?
+    let nextInvoice: Invoice?
+    struct Invoice: Decodable { let amountDueCents: Double? }
 }

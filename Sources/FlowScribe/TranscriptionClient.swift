@@ -40,10 +40,13 @@ final class TranscriptionClient {
 
     private let session: URLSession
     private let environment: [String: String]
+    private let usageStore: UsageStore
 
-    init(session: URLSession = .shared, environment: [String: String] = ProcessInfo.processInfo.environment) {
+    init(session: URLSession = .shared, environment: [String: String] = ProcessInfo.processInfo.environment,
+         usageStore: UsageStore = .shared) {
         self.session = session
         self.environment = environment
+        self.usageStore = usageStore
     }
 
     func transcribe(fileAt url: URL) async throws -> String {
@@ -72,15 +75,19 @@ final class TranscriptionClient {
         request.timeoutInterval = 60
         request.httpBody = body
 
+        try Task.checkCancellation()
+        let ticket = usageStore.begin(provider: .openAI, model: model, units: WAVHeader.duration(of: wav))
         let data: Data
         let response: URLResponse
         do {
             (data, response) = try await session.data(for: request)
-        } catch is CancellationError {
-            throw CancellationError()
         } catch {
+            usageStore.finish(ticket, status: nil)
+            if Task.isCancelled || error is CancellationError { throw CancellationError() }
             throw APIError(kind: .transport, detail: Self.userFacingDetail(error))
         }
+        usageStore.finish(ticket, status: (response as? HTTPURLResponse)?.statusCode)
+        try Task.checkCancellation()
         // Never log data contents (contains the transcript) or headers (contain the key).
         guard let http = response as? HTTPURLResponse else {
             throw APIError(kind: .badResponse, detail: nil)

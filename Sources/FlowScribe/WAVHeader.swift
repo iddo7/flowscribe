@@ -37,6 +37,20 @@ enum WAVHeader {
         return header
     }
 
+    /// FlowScribe writes canonical 44-byte PCM headers; unknown formats stay unpriced.
+    static func duration(of wav: Data) -> Double? {
+        guard wav.count >= 44 else { return nil }
+        let bytes = [UInt8](wav.prefix(44))
+        func ascii(_ start: Int, _ end: Int) -> String { String(bytes: bytes[start..<end], encoding: .ascii) ?? "" }
+        func uint32(_ start: Int) -> UInt32 {
+            (0..<4).reduce(UInt32(0)) { $0 | UInt32(bytes[start + $1]) << ($1 * 8) }
+        }
+        guard ascii(0, 4) == "RIFF", ascii(8, 12) == "WAVE", ascii(12, 16) == "fmt ",
+              uint32(16) == 16, bytes[20] == 1, bytes[21] == 0, ascii(36, 40) == "data",
+              uint32(28) > 0, Int(uint32(40)) <= wav.count - 44 else { return nil }
+        return Double(uint32(40)) / Double(uint32(28))
+    }
+
     /// Rewrites the RIFF/data length fields of an existing WAV buffer in place.
     static func finalize(_ wav: inout Data, dataBytes: Int) {
         guard wav.count >= headerByteCount else { return }

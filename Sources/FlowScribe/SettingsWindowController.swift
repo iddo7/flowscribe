@@ -17,6 +17,7 @@ final class SettingsWindowController: NSWindowController {
     private let tabs = NSTabView()
     private let pillSettingsView = PillSettingsView()
     private let readerSettingsView = ReaderSettingsView()
+    private let usageDashboardView = UsageDashboardView()
 
     var onKeyChanged: (() -> Void)?
 
@@ -66,6 +67,16 @@ final class SettingsWindowController: NSWindowController {
         ])
         reader.view = readerScroll
         tabs.addTabViewItem(reader)
+        let usage = NSTabViewItem(identifier: "usage")
+        usage.label = "Usage & cost"
+        let usageScroll = NSScrollView()
+        usageScroll.hasVerticalScroller = true
+        usageScroll.drawsBackground = false
+        usageDashboardView.translatesAutoresizingMaskIntoConstraints = false
+        usageScroll.documentView = usageDashboardView
+        usageDashboardView.widthAnchor.constraint(equalTo: usageScroll.contentView.widthAnchor).isActive = true
+        usage.view = usageScroll
+        tabs.addTabViewItem(usage)
         tabs.delegate = self
         tabs.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(tabs)
@@ -320,6 +331,9 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func updatePillPreview() {
+        if tabs.selectedTabViewItem?.identifier as? String == "usage", window?.isVisible == true {
+            usageDashboardView.activate()
+        }
         if tabs.selectedTabViewItem?.identifier as? String == "pill", window?.isVisible == true {
             pillSettingsView.startPreview()
         } else {

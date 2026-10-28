@@ -26,7 +26,7 @@ final class ReaderControllerTests: XCTestCase {
         }
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [SpeechStubProtocol.self]
-        let client = SpeechClient(session: URLSession(configuration: config), keyReader: { "fake-key" })
+        let client = SpeechClient(session: URLSession(configuration: config), keyReader: { "fake-key" }, usageStore: UsageStore(defaults: nil))
         return ReaderController(client: client, makePlayer: makePlayer)
     }
 
