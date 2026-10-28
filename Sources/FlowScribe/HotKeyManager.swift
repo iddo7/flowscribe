@@ -4,15 +4,19 @@ import Foundation
 /// Global ⌃⌥Space press/release pair registered with Carbon.
 final class HotKeyManager {
     private var hotKeyRef: EventHotKeyRef?
+    private var readerHotKeyRef: EventHotKeyRef?
     private var settingsHotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
     private var isPressed = false
     private var isSettingsPressed = false
+    private var isReaderPressed = false
+    private(set) var isReaderShortcutRegistered = false
     private(set) var isSettingsShortcutRegistered = false
 
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
     var onSettings: (() -> Void)?
+    var onReadSelection: (() -> Void)?
 
     /// Registers Control+Option+Space system-wide and listens for both edges.
     @discardableResult
@@ -67,10 +71,22 @@ final class HotKeyManager {
                                                            UInt32(controlKey | optionKey), settingsID,
                                                            GetApplicationEventTarget(), 0,
                                                            &settingsHotKeyRef) == noErr
+        let readerID = EventHotKeyID(signature: OSType(0x464C5753), id: 3)
+        isReaderShortcutRegistered = RegisterEventHotKey(UInt32(kVK_ANSI_R),
+                                                        UInt32(controlKey | optionKey), readerID,
+                                                        GetApplicationEventTarget(), 0,
+                                                        &readerHotKeyRef) == noErr
         return true
     }
 
     private func handle(eventKind: UInt32, id: UInt32) {
+        if id == 3 {
+            if eventKind == UInt32(kEventHotKeyPressed), !isReaderPressed {
+                isReaderPressed = true
+                onReadSelection?()
+            } else if eventKind == UInt32(kEventHotKeyReleased) { isReaderPressed = false }
+            return
+        }
         if id == 2 {
             if eventKind == UInt32(kEventHotKeyPressed), !isSettingsPressed {
                 isSettingsPressed = true
@@ -97,6 +113,12 @@ final class HotKeyManager {
         isPressed = false
         isSettingsPressed = false
         isSettingsShortcutRegistered = false
+        isReaderPressed = false
+        isReaderShortcutRegistered = false
+        if let ref = readerHotKeyRef {
+            UnregisterEventHotKey(ref)
+            readerHotKeyRef = nil
+        }
         if let ref = settingsHotKeyRef {
             UnregisterEventHotKey(ref)
             settingsHotKeyRef = nil

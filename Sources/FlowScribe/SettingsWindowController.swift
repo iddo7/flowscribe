@@ -16,6 +16,7 @@ final class SettingsWindowController: NSWindowController {
     private let noticeField = NSTextField(wrappingLabelWithString: "No errors reported. Microphone testing is local; no audio is uploaded.")
     private let tabs = NSTabView()
     private let pillSettingsView = PillSettingsView()
+    private let readerSettingsView = ReaderSettingsView()
 
     var onKeyChanged: (() -> Void)?
 
@@ -52,6 +53,19 @@ final class SettingsWindowController: NSWindowController {
         pill.view = pillSettingsView
         tabs.addTabViewItem(general)
         tabs.addTabViewItem(pill)
+        let reader = NSTabViewItem(identifier: "reader")
+        reader.label = "Read aloud"
+        let readerScroll = NSScrollView()
+        readerScroll.hasVerticalScroller = true
+        readerScroll.drawsBackground = false
+        readerSettingsView.translatesAutoresizingMaskIntoConstraints = false
+        readerScroll.documentView = readerSettingsView
+        NSLayoutConstraint.activate([
+            readerSettingsView.widthAnchor.constraint(equalTo: readerScroll.contentView.widthAnchor),
+            readerSettingsView.heightAnchor.constraint(greaterThanOrEqualToConstant: 660)
+        ])
+        reader.view = readerScroll
+        tabs.addTabViewItem(reader)
         tabs.delegate = self
         tabs.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(tabs)
@@ -288,6 +302,12 @@ final class SettingsWindowController: NSWindowController {
                 }
             }
         }
+    }
+
+    func showReadingNotice(_ message: String) {
+        tabs.selectTabViewItem(withIdentifier: "reader")
+        readerSettingsView.showNotice(message)
+        showWindowNonActivating()
     }
 
     func showWindowNonActivating() {

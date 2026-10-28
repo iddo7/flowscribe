@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let client = TranscriptionClient()
     private let paste = PasteController()
     private let hotKeys = HotKeyManager()
+    private let reader = ReaderController()
     private lazy var settingsWindow = SettingsWindowController()
 
     private var statusItem: NSStatusItem?
@@ -37,8 +38,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKeys.onPress = { [weak self] in self?.handleHotKeyPressed() }
         hotKeys.onRelease = { [weak self] in self?.handleHotKeyReleased() }
         hotKeys.onSettings = { [weak self] in self?.settingsTapped() }
+        hotKeys.onReadSelection = { [weak self] in self?.reader.readSelection() }
+        reader.canRead = { [weak self] in
+            guard let self else { return false }
+            return self.stateMachine.canStartRecording && self.permissionTask == nil
+        }
+        reader.onFailure = { [weak self] message in
+            self?.settingsWindow.showReadingNotice(message)
+        }
+        reader.startMonitoring()
         if !hotKeys.register() {
             presentNotice(title: "FlowScribe", body: "Could not register the ⌃⌥Space global shortcut. It may be in use by another app.")
+        }
+        if !hotKeys.isReaderShortcutRegistered {
+            presentNotice(title: "Read aloud shortcut unavailable", body: "⌃⌥R is already in use. Use the selection button or menu bar instead.")
         }
         _ = Permissions.requestAccessibilityIfNeeded()
         updateMenu()
@@ -56,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         hotKeys.unregister()
+        reader.shutdown()
         permissionTask?.cancel()
         permissionRequestID = nil
         transcriptionTask?.cancel()
@@ -107,6 +121,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.delegate = self
         menu.addItem(withTitle: "Start dictation (hold ⌃⌥Space)", action: #selector(toggleTapped), keyEquivalent: "")
+        menu.addItem(withTitle: "Read selection / pause (⌃⌥R)", action: #selector(readSelectionTapped), keyEquivalent: "")
+        menu.addItem(withTitle: "Stop reading", action: #selector(stopReadingTapped), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(settingsTapped), keyEquivalent: ",")
         menu.addItem(withTitle: "Quit FlowScribe", action: #selector(quitTapped), keyEquivalent: "q")
@@ -136,6 +152,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem?.button?.title = "…"
         }
     }
+
+    @objc private func readSelectionTapped() { reader.readSelection() }
+    @objc private func stopReadingTapped() { reader.stop() }
 
     @objc private func toggleTapped() { handleMenuToggle() }
 
@@ -191,6 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func requestStartRecording() {
         guard permissionTask == nil, stateMachine.canStartRecording else { return }
+        reader.stop()
         capturedTarget = PasteController.rememberPasteTarget()
         let requestID = UUID()
         permissionRequestID = requestID

@@ -57,6 +57,23 @@ If your selected microphone disconnects, FlowScribe temporarily uses the system 
 
 **Test microphone** checks the selected input for two seconds locally, without uploading audio or changing the clipboard. **Latest message** shows the actual recording/transcription error when the pill displays `!`, including when macOS notifications are hidden.
 
+## Read selected text aloud
+
+Open **Settings → Read aloud**, save your own ElevenLabs API key, and choose **Load my voices** or enter a voice ID. ElevenLabs usage is billed to your account. **Listen to a sample** previews the selected voice in French and English. Language detection is automatic; accent depends on the voice. Choose Natural (Multilingual v2), Expressive (Eleven v3), or Fast (Flash v2.5). Text is sent as selected, without an LLM rewrite or added emotion tags.
+
+- Select text in another app and press **⌃⌥R**, or use the menu-bar **Read selection / pause** action. The shortcut toggles pause/resume during an existing reading.
+- A quiet speaker button appears after selecting at least 40 characters and six words, excluding identifiable links and URL selections. It disappears after seven seconds, scrolling, typing, or changing apps. Disable it in Settings if you prefer the shortcut alone.
+- Click the audio bubble to pause/resume. Its bars respond to the actual playback volume. **Esc**, the bubble’s **••• → Stop reading**, or the menu bar stops playback. Starting dictation also stops reading.
+- When the source app exposes text geometry, the bubble follows the current word’s line alongside the selected passage. Click a word **within the original selected passage** to seek backward or forward. Normal link clicks are left alone; clicking does not consume the source app’s mouse event.
+- **••• → Show reading text…** opens a synchronized reading view with clickable words, including for apps that do not expose word positions. The source bubble stays stable when geometry is unavailable. Reading continues if you switch apps; the bubble hides until you return.
+- **••• → Speed** changes playback speed without generating audio again. Voice/model changes apply to the next reading.
+
+Accessibility permission is required. Compatibility varies across browsers, PDF readers, and custom editors; image-only text requires OCR and is not supported. Explicit reading can fall back to Copy when an app exposes no AX selection, briefly saving/restoring the clipboard. Passive selection detection never touches the clipboard. Very large selections above 100,000 characters are not read.
+
+Audio is requested in short segments, with at most one upcoming segment prepared during playback. Seeking to uncached text can take a moment and uses credits; if word timing is unavailable, seeking requests audio starting at the clicked word instead of guessing. Stopping cancels outstanding requests and clears the reading text/audio from memory. Requests already processed by ElevenLabs may still be billed.
+
+The ElevenLabs key uses its own Keychain account, `elevenlabs-api-key`, under service `com.flowscribe.app`; it does not replace the OpenAI key. `ELEVENLABS_API_KEY` overrides it when present in the app’s launch environment. Speech requests use `https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-timestamps`; voice discovery uses `/v2/voices`. Selected text is sent to ElevenLabs, subject to its account retention policies. Generated audio is not written to disk or cached on disk by FlowScribe.
+
 ## Permissions (System Settings → Privacy & Security)
 
 | Permission | When | If denied |
@@ -71,7 +88,7 @@ The app never activates itself into the foreground while you work.
 - The temp WAV file is created with `0600` permissions, lives only for the duration of the API call, and is deleted afterwards — including on errors.
 - The API key is never logged, never written to disk (except Keychain when you save it there), and never included in error messages.
 - Transcripts are never logged. Network failures are reported with coarse reasons only (timeout, offline, HTTP status).
-- Audio is sent to `https://api.openai.com/v1/audio/transcriptions` over TLS.
+- Dictation audio is sent to `https://api.openai.com/v1/audio/transcriptions` over TLS. Read-aloud text is sent to ElevenLabs as described above.
 
 ## Model selection
 

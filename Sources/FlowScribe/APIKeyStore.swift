@@ -25,13 +25,13 @@ enum APIKeyStore {
 
     /// Checks metadata without decrypting the key or displaying an access prompt.
     /// nil means Keychain status could not be checked, rather than a missing key.
-    static func containsKeychainKey() -> Bool? {
+    static func containsKeychainKey(account: String = keychainAccount) -> Bool? {
         let context = LAContext()
         context.interactionNotAllowed = true
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
+            kSecAttrAccount as String: account,
             kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationContext as String: context
@@ -44,11 +44,11 @@ enum APIKeyStore {
         }
     }
 
-    static func readKeychain() -> String? {
+    static func readKeychain(account: String = keychainAccount) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
+            kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -61,7 +61,7 @@ enum APIKeyStore {
 
     /// Saves (or updates) the key. Returns false on Keychain failure.
     @discardableResult
-    static func saveKey(_ key: String) -> Bool {
+    static func saveKey(_ key: String, account: String = keychainAccount) -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         let data = Data(trimmed.utf8)
@@ -69,7 +69,7 @@ enum APIKeyStore {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount
+            kSecAttrAccount as String: account
         ]
 
         // Delete then add: simpler than update flow, avoids errSecItemNotFound juggling.
@@ -81,11 +81,11 @@ enum APIKeyStore {
     }
 
     @discardableResult
-    static func deleteKey() -> Bool {
+    static func deleteKey(account: String = keychainAccount) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount
+            kSecAttrAccount as String: account
         ]
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
