@@ -1,31 +1,40 @@
 import AppKit
-import AVFoundation
 
 final class ReaderSettingsView: NSView {
     private let key = NSSecureTextField()
     private let status = NSTextField(wrappingLabelWithString: "")
-    private let voices = NSPopUpButton()
-    private let voiceID = NSTextField()
+    let voices = NSPopUpButton()
+    let voiceID = NSTextField()
+    private let voiceStatus = NSTextField(wrappingLabelWithString: "")
+    private let applyVoiceButton = NSButton(title: "Apply voice", target: nil, action: nil)
     private let models = NSPopUpButton()
     private let speed = NSPopUpButton()
     private let offers = NSButton(checkboxWithTitle: "Show a discreet button beside longer selections", target: nil, action: nil)
     private let loadButton = NSButton(title: "Load my voices", target: nil, action: nil)
-    private let previewButton = NSButton(title: "Listen to a sample", target: nil, action: nil)
+    let previewButton = NSButton(title: "Listen to a sample", target: nil, action: nil)
     private var task: Task<Void, Never>?
-    private var sample: AVAudioPlayer?
+    private var sample: (any ReaderAudioPlaying)?
+    private let defaults: UserDefaults
+    private let client: SpeechClient
+    private let makePlayer: @MainActor (Data) throws -> any ReaderAudioPlaying
+    private var availableVoices = [SpeechVoice(voiceId: "JBFqnCBsd6RMkjVDRZzb", name: "George · default")]
     private let rates: [Float] = [0.75, 1, 1.25, 1.5, 1.75, 2]
 
     override var isFlipped: Bool { true }
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(defaults: UserDefaults = .standard, client: SpeechClient = SpeechClient(),
+         makePlayer: @escaping @MainActor (Data) throws -> any ReaderAudioPlaying = { try ReaderAudioOutput(data: $0) }) {
+        self.defaults = defaults
+        self.client = client
+        self.makePlayer = makePlayer
+        super.init(frame: .zero)
         buildUI()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     private func buildUI() {
-        let settings = ReaderSettings.load()
+        let settings = ReaderSettings.load(defaults: defaults)
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -66,13 +75,6 @@ final class ReaderSettingsView: NSView {
         loadButton.action = #selector(loadVoices)
         voices.target = self
         voices.action = #selector(voiceChanged)
-        voices.addItem(withTitle: "George · default")
-        voices.lastItem?.representedObject = "JBFqnCBsd6RMkjVDRZzb"
-        if settings.voiceID != "JBFqnCBsd6RMkjVDRZzb" {
-            voices.addItem(withTitle: "Saved voice")
-            voices.lastItem?.representedObject = settings.voiceID
-            voices.selectItem(at: 1)
-        }
         add(label("Voice"))
         let voiceRow = NSStackView(views: [voices, loadButton])
         voices.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -81,9 +83,20 @@ final class ReaderSettingsView: NSView {
         voiceID.placeholderString = "Or paste a voice ID from ElevenLabs"
         voiceID.stringValue = settings.voiceID
         voiceID.target = self
-        voiceID.action = #selector(savePreferences)
+        voiceID.action = #selector(applyVoice)
         voiceID.delegate = self
-        add(voiceID, fullWidth: true)
+        voiceID.setAccessibilityLabel("ElevenLabs voice ID")
+        applyVoiceButton.target = self
+        applyVoiceButton.action = #selector(applyVoice)
+        let voiceIDRow = NSStackView(views: [voiceID, applyVoiceButton])
+        voiceIDRow.spacing = 8
+        voiceID.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        add(voiceIDRow, fullWidth: true)
+        voiceStatus.font = .systemFont(ofSize: 11)
+        voiceStatus.textColor = .secondaryLabelColor
+        add(voiceStatus, fullWidth: true)
+        refreshVoiceMenu(selectedID: settings.voiceID)
+        voiceStatus.stringValue = "Saved automatically. Start a new reading to use this voice."
         models.addItems(withTitles: ReaderSettings.VoiceModel.allCases.map(\.title))
         models.selectItem(at: ReaderSettings.VoiceModel.allCases.firstIndex(of: settings.model) ?? 0)
         models.target = self
@@ -133,18 +146,73 @@ final class ReaderSettingsView: NSView {
         else { status.stringValue = "Could not delete the ElevenLabs key." }
     }
 
+    private func refreshVoiceMenu(selectedID: String) {
+        voices.removeAllItems()
+        for voice in availableVoices {
+            voices.addItem(withTitle: voice.name)
+            voices.lastItem?.representedObject = voice.voiceId
+        }
+        if !availableVoices.contains(where: { $0.voiceId == selectedID }) {
+            voices.addItem(withTitle: "Custom voice · \(selectedID.prefix(8))…")
+            voices.lastItem?.representedObject = selectedID
+        }
+        if let index = voices.itemArray.firstIndex(where: { $0.representedObject as? String == selectedID }) {
+            voices.selectItem(at: index)
+        }
+    }
+
+    private func stopSample() {
+        task?.cancel()
+        sample?.stop()
+        if sample != nil { status.stringValue = "Previous voice sample stopped." }
+        sample = nil
+        loadButton.isEnabled = true
+    }
+
+    /// Read the field editor too: clicking a button need not end NSTextField editing.
+    @discardableResult
+    private func saveVoice() -> Bool {
+        let input = voiceID.currentEditor()?.string ?? voiceID.stringValue
+        guard let id = ReaderVoiceID.normalized(input) else {
+            stopSample()
+            previewButton.isEnabled = false
+            voiceStatus.stringValue = "Paste a valid ElevenLabs voice ID, then click Apply voice. The previous voice is kept until the ID is valid."
+            return false
+        }
+        var settings = ReaderSettings.load(defaults: defaults)
+        let changed = settings.voiceID != id
+        if changed {
+            stopSample()
+            settings.voiceID = id
+            settings.save(defaults: defaults)
+        }
+        refreshVoiceMenu(selectedID: id)
+        previewButton.isEnabled = true
+        voiceStatus.stringValue = "✓ Voice saved. The next sample and new reading will use this ID."
+        if changed { NotificationCenter.default.post(name: ReaderSettings.voiceDidChange, object: self) }
+        return true
+    }
+
+    @objc private func applyVoice() {
+        guard saveVoice() else { return }
+        // Commit whitespace normalization without abandoning an in-progress paste.
+        window?.makeFirstResponder(nil)
+        voiceID.stringValue = ReaderSettings.load(defaults: defaults).voiceID
+    }
+
     @objc private func voiceChanged() {
-        if let id = voices.selectedItem?.representedObject as? String { voiceID.stringValue = id }
-        savePreferences()
+        guard let id = voices.selectedItem?.representedObject as? String else { return }
+        window?.makeFirstResponder(nil)
+        voiceID.stringValue = id
+        saveVoice()
     }
 
     @objc private func savePreferences() {
-        var settings = ReaderSettings.load()
-        settings.voiceID = voiceID.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        var settings = ReaderSettings.load(defaults: defaults)
         settings.model = ReaderSettings.VoiceModel.allCases[max(0, models.indexOfSelectedItem)]
         settings.speed = rates[max(0, speed.indexOfSelectedItem)]
         settings.offersSelection = offers.state == .on
-        settings.save()
+        settings.save(defaults: defaults)
     }
 
     @objc private func loadVoices() {
@@ -155,16 +223,12 @@ final class ReaderSettingsView: NSView {
         status.stringValue = "Loading voices…"
         task = Task { [weak self] in
             do {
-                let list = try await SpeechClient().voices()
+                guard let client = self?.client else { return }
+                let list = try await client.voices()
                 guard let self, !Task.isCancelled else { return }
-                let selected = ReaderSettings.load().voiceID
-                self.voices.removeAllItems()
-                for voice in list {
-                    self.voices.addItem(withTitle: voice.name)
-                    self.voices.lastItem?.representedObject = voice.voiceId
-                }
-                if let index = list.firstIndex(where: { $0.voiceId == selected }) { self.voices.selectItem(at: index) }
-                else { self.voices.select(nil) }
+                let selected = ReaderSettings.load(defaults: self.defaults).voiceID
+                self.availableVoices = list
+                self.refreshVoiceMenu(selectedID: selected)
                 self.status.stringValue = "\(list.count) voices available. Choose a voice or enter its ID."
                 self.loadButton.isEnabled = true
             } catch {
@@ -176,23 +240,24 @@ final class ReaderSettingsView: NSView {
     }
 
     @objc private func preview() {
+        guard saveVoice() else { return }
         savePreferences()
         task?.cancel()
         sample?.stop()
         previewButton.isEnabled = false
         loadButton.isEnabled = true
         status.stringValue = "Preparing a voice sample…"
-        let settings = ReaderSettings.load()
+        let settings = ReaderSettings.load(defaults: defaults)
         task = Task { [weak self] in
             do {
-                let clip = try await SpeechClient().synthesize("Bonjour! Prenez un moment pour écouter. A natural voice brings every sentence to life.", settings: settings)
+                guard let client = self?.client else { return }
+                let clip = try await client.synthesize("Bonjour! Prenez un moment pour écouter. A natural voice brings every sentence to life.", settings: settings)
                 guard let self, !Task.isCancelled else { return }
-                let player = try AVAudioPlayer(data: clip.audio)
-                player.enableRate = true
+                let player = try self.makePlayer(clip.audio)
                 player.rate = settings.speed
                 self.sample = player
                 guard player.play() else { throw SpeechClient.Failure.invalidResponse }
-                self.status.stringValue = "Playing a French and English sample."
+                self.status.stringValue = "Playing sample · \(self.voices.titleOfSelectedItem ?? "Selected voice")."
                 self.previewButton.isEnabled = true
             } catch {
                 guard let self, !Task.isCancelled else { return }
@@ -204,5 +269,13 @@ final class ReaderSettingsView: NSView {
 }
 
 extension ReaderSettingsView: NSTextFieldDelegate {
-    func controlTextDidEndEditing(_ obj: Notification) { savePreferences() }
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField, field === voiceID else { return }
+        saveVoice()
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField, field === voiceID else { return }
+        saveVoice()
+    }
 }

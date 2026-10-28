@@ -10,7 +10,18 @@ enum ElevenLabsKeyStore {
     }
 }
 
+enum ReaderVoiceID {
+    static func normalized(_ input: String) -> String? {
+        let id = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, id.count <= 128,
+              !id.lowercased().hasPrefix("sk-"), !id.lowercased().hasPrefix("sk_"),
+              id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }) else { return nil }
+        return id
+    }
+}
+
 struct ReaderSettings {
+    static let voiceDidChange = Notification.Name("FlowScribeReaderVoiceDidChange")
     enum VoiceModel: String, CaseIterable {
         case natural = "eleven_multilingual_v2"
         case expressive = "eleven_v3"
@@ -91,10 +102,8 @@ struct SpeechClient {
     func synthesize(_ text: String, settings: ReaderSettings, previousText: String? = nil,
                     nextText: String? = nil) async throws -> SpeechClip {
         try Task.checkCancellation()
-        guard !settings.voiceID.isEmpty,
-              settings.voiceID.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") })
-        else { throw Failure.invalidVoice }
-        var request = try request(path: "v1/text-to-speech/\(settings.voiceID)/with-timestamps?output_format=mp3_44100_128")
+        guard let voiceID = ReaderVoiceID.normalized(settings.voiceID) else { throw Failure.invalidVoice }
+        var request = try request(path: "v1/text-to-speech/\(voiceID)/with-timestamps?output_format=mp3_44100_128")
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         var body: [String: Any] = [

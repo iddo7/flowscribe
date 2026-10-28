@@ -28,6 +28,7 @@ final class ReaderController {
     private var playingClip: SpeechClip?
     private var playingTextOffset = 0
     private var workspaceObserver: NSObjectProtocol?
+    private var voiceObserver: NSObjectProtocol?
     private var timer: Timer?
     private var segmentIndex = 0
     private var pendingOffset = 0
@@ -62,6 +63,10 @@ final class ReaderController {
     }
 
     func startMonitoring() {
+        voiceObserver = NotificationCenter.default.addObserver(forName: ReaderSettings.voiceDidChange,
+                                                              object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stop() }
+        }
         workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -89,6 +94,8 @@ final class ReaderController {
         stop()
         if let workspaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver) }
         workspaceObserver = nil
+        if let voiceObserver { NotificationCenter.default.removeObserver(voiceObserver) }
+        voiceObserver = nil
         for token in [monitor, localMonitor, escapeMonitor].compactMap({ $0 }) { NSEvent.removeMonitor(token) }
         monitor = nil
         localMonitor = nil
