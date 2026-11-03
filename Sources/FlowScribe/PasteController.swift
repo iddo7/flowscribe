@@ -27,6 +27,9 @@ final class PasteController {
     private let pasteKeystrokeSender: () -> Bool
     /// Delay before synthesizing paste so the target app finishes activating.
     var activationDelay: TimeInterval = 0.15
+    /// Accessibility trees and focus can settle after application activation.
+    var focusRetryDelay: TimeInterval = 0.1
+    var maximumFocusAttempts = 8
     /// Gives the target app time to consume the pasteboard before restoration.
     var clipboardRestoreDelay: TimeInterval = 0.35
 
@@ -131,10 +134,12 @@ final class PasteController {
     static func focusedElement(
         for processID: pid_t,
         applicationFocus: (pid_t) -> AXUIElement? = {
-            focusedElementAttribute(of: AXUIElementCreateApplication($0))
+            focusedElementAttribute(of: ApplicationAccessibility.prepare(AXUIElementCreateApplication($0)))
         },
         systemFocus: () -> AXUIElement? = {
-            focusedElementAttribute(of: AXUIElementCreateSystemWide())
+            let system = AXUIElementCreateSystemWide()
+            AXUIElementSetMessagingTimeout(system, 0.15)
+            return focusedElementAttribute(of: system)
         },
         elementProcessID: (AXUIElement) -> pid_t? = {
             var pid: pid_t = 0
@@ -243,24 +248,48 @@ final class PasteController {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + activationDelay) { [weak self] in
             guard let self else { return }
-            guard self.pasteboard.changeCount == installedChangeCount else {
-                completion(.failed("The clipboard changed before automatic paste. Please transcribe again."))
-                return
-            }
-            // Recheck after activation: focus can change while transcribing.
-            guard self.focusedInputChecker(deliverable) else {
+            self.attemptPaste(deliverable, savedItems: savedItems,
+                              installedChangeCount: installedChangeCount,
+                              attemptsRemaining: max(1, self.maximumFocusAttempts),
+                              completion: completion)
+        }
+    }
+
+    private func attemptPaste(_ deliverable: Deliverable,
+                              savedItems: [[NSPasteboard.PasteboardType: Data]],
+                              installedChangeCount: Int,
+                              attemptsRemaining: Int,
+                              completion: @escaping (DeliveryResult) -> Void) {
+        guard pasteboard.changeCount == installedChangeCount else {
+            completion(.failed("The clipboard changed before automatic paste. Please transcribe again."))
+            return
+        }
+        guard accessibilityChecker() else {
+            completion(.clipboardOnly(.accessibilityUnavailable))
+            return
+        }
+        // Every attempt queries fresh AX elements and validates the frontmost app.
+        // Never send a speculative paste when another app or a non-input has focus.
+        guard focusedInputChecker(deliverable) else {
+            guard attemptsRemaining > 1 else {
                 completion(.clipboardOnly(.noFocusedInput))
                 return
             }
-            let ok = self.pasteKeystrokeSender()
-            if ok {
-                DispatchQueue.main.asyncAfter(deadline: .now() + self.clipboardRestoreDelay) {
-                    self.restoreClipboardIfNeeded(savedItems: savedItems, installedChangeCount: installedChangeCount)
-                    completion(.pasted)
-                }
-            } else {
-                completion(.failed("Could not synthesize the paste keystroke. The transcript is on your clipboard (⌘V to paste manually)."))
+            DispatchQueue.main.asyncAfter(deadline: .now() + focusRetryDelay) { [weak self] in
+                self?.attemptPaste(deliverable, savedItems: savedItems,
+                                   installedChangeCount: installedChangeCount,
+                                   attemptsRemaining: attemptsRemaining - 1,
+                                   completion: completion)
             }
+            return
+        }
+        guard pasteKeystrokeSender() else {
+            completion(.failed("Could not synthesize the paste keystroke. The transcript is on your clipboard (⌘V to paste manually)."))
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + clipboardRestoreDelay) {
+            self.restoreClipboardIfNeeded(savedItems: savedItems, installedChangeCount: installedChangeCount)
+            completion(.pasted)
         }
     }
 

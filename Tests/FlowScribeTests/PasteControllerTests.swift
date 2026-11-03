@@ -145,6 +145,93 @@ final class PasteControllerTests: XCTestCase {
         XCTAssertEqual(pasteboard.string(forType: .string), transcript)
     }
 
+    func testFocusCanRecoverAfterActivationWithoutManualPaste() {
+        pasteboard.setString("Previous clipboard", forType: .string)
+        var focusChecks = 0
+        var pasteCount = 0
+        let controller = makeController(focusedInputChecker: { _ in
+            focusChecks += 1
+            return focusChecks == 3
+        }, pasteKeystrokeSender: {
+            pasteCount += 1
+            return true
+        })
+        let delivered = expectation(description: "focus recovered")
+        controller.deliver(deliverable) { result in
+            if case .pasted = result {} else { XCTFail("Expected recovered automatic paste") }
+            delivered.fulfill()
+        }
+        wait(for: [delivered], timeout: 1)
+        XCTAssertEqual(focusChecks, 3)
+        XCTAssertEqual(pasteCount, 1)
+        XCTAssertEqual(pasteboard.string(forType: .string), "Previous clipboard")
+    }
+
+    func testPersistentMissingOrUnrelatedFocusStopsAfterBoundedRetries() {
+        var focusChecks = 0
+        let controller = makeController(focusedInputChecker: { _ in
+            focusChecks += 1
+            return false
+        }, pasteKeystrokeSender: {
+            XCTFail("Do not paste without a confirmed input in the target app")
+            return true
+        })
+        controller.maximumFocusAttempts = 3
+        let delivered = expectation(description: "focus retry limit")
+        controller.deliver(deliverable) { result in
+            if case .clipboardOnly(.noFocusedInput) = result {} else { XCTFail("Expected clipboard fallback") }
+            delivered.fulfill()
+        }
+        wait(for: [delivered], timeout: 1)
+        XCTAssertEqual(focusChecks, 3)
+        XCTAssertEqual(pasteboard.string(forType: .string), transcript)
+    }
+
+    func testClipboardChangeDuringFocusRecoveryCancelsPaste() {
+        var focusChecks = 0
+        let controller = makeController(focusedInputChecker: { _ in
+            focusChecks += 1
+            self.pasteboard.clearContents()
+            self.pasteboard.setString("User copy", forType: .string)
+            return false
+        }, pasteKeystrokeSender: {
+            XCTFail("Never paste a user copy while recovering focus")
+            return true
+        })
+        let delivered = expectation(description: "clipboard changed during retry")
+        controller.deliver(deliverable) { result in
+            if case .failed = result {} else { XCTFail("Expected cancellation") }
+            delivered.fulfill()
+        }
+        wait(for: [delivered], timeout: 1)
+        XCTAssertEqual(focusChecks, 1)
+        XCTAssertEqual(pasteboard.string(forType: .string), "User copy")
+    }
+
+    func testAccessibilityRevokedDuringFocusRecoveryStopsRetries() {
+        var trusted = true
+        var focusChecks = 0
+        let controller = PasteController(accessibilityChecker: { trusted }, pasteboard: pasteboard,
+                                         activateTarget: { _ in true }, focusedInputChecker: { _ in
+            focusChecks += 1
+            trusted = false
+            return false
+        }, pasteKeystrokeSender: {
+            XCTFail("Never send paste after access is revoked")
+            return true
+        })
+        controller.activationDelay = 0
+        controller.focusRetryDelay = 0
+        let delivered = expectation(description: "access revoked during retry")
+        controller.deliver(deliverable) { result in
+            if case .clipboardOnly(.accessibilityUnavailable) = result {} else { XCTFail("Expected permission fallback") }
+            delivered.fulfill()
+        }
+        wait(for: [delivered], timeout: 1)
+        XCTAssertEqual(focusChecks, 1)
+        XCTAssertEqual(pasteboard.string(forType: .string), transcript)
+    }
+
     func testUserCopyOfIdenticalTextIsNotOverwrittenByClipboardRestoration() {
         pasteboard.setString("Previous clipboard", forType: .string)
         let controller = makeController(pasteKeystrokeSender: {
@@ -214,6 +301,7 @@ final class PasteControllerTests: XCTestCase {
             }
         )
         controller.activationDelay = 0
+        controller.focusRetryDelay = 0
         controller.clipboardRestoreDelay = 0
         let delivered = expectation(description: "transcript copied")
         controller.deliver(deliverable) { result in
@@ -237,6 +325,7 @@ final class PasteControllerTests: XCTestCase {
                                          focusedInputChecker: focusedInputChecker,
                                          pasteKeystrokeSender: pasteKeystrokeSender)
         controller.activationDelay = 0
+        controller.focusRetryDelay = 0
         controller.clipboardRestoreDelay = 0
         return controller
     }

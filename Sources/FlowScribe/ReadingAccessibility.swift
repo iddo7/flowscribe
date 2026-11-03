@@ -18,8 +18,7 @@ enum ReadingAccessibility {
 
     static func selection(processID: pid_t, point: CGPoint) -> Selection? {
         guard AXIsProcessTrusted() else { return nil }
-        let app = AXUIElementCreateApplication(processID)
-        AXUIElementSetMessagingTimeout(app, 0.15)
+        let app = ApplicationAccessibility.prepare(AXUIElementCreateApplication(processID))
         var candidates: [AXUIElement] = []
         if let focused = element(attribute(app, kAXFocusedUIElementAttribute)) { candidates.append(focused) }
         var hit: AXUIElement?
