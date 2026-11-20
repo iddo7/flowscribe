@@ -14,7 +14,7 @@ final class SpeechClientTests: XCTestCase {
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(request.url?.path, "/v1/text-to-speech/testVoice/with-timestamps")
             XCTAssertEqual(request.value(forHTTPHeaderField: "xi-api-key"), "test-key")
-            let body = try JSONSerialization.jsonObject(with: self.body(request)) as! [String: Any]
+            let body = try JSONSerialization.jsonObject(with: request.testBodyData) as! [String: Any]
             XCTAssertEqual(body["text"] as? String, "Hi")
             XCTAssertEqual(body["model_id"] as? String, "eleven_multilingual_v2")
             XCTAssertEqual(body["previous_text"] as? String, "Before.")
@@ -28,7 +28,7 @@ final class SpeechClientTests: XCTestCase {
 
     func testExpressiveModelOmitsUnsupportedStitchingParameters() async throws {
         let client = client { request in
-            let body = try JSONSerialization.jsonObject(with: self.body(request)) as! [String: Any]
+            let body = try JSONSerialization.jsonObject(with: request.testBodyData) as! [String: Any]
             XCTAssertEqual(body["model_id"] as? String, "eleven_v3")
             XCTAssertNil(body["previous_text"])
             XCTAssertNil(body["next_text"])
@@ -84,10 +84,12 @@ final class SpeechClientTests: XCTestCase {
     private func settings() -> ReaderSettings {
         ReaderSettings(voiceID: "testVoice", model: .natural, speed: 1, offersSelection: true)
     }
+}
 
-    private func body(_ request: URLRequest) -> Data {
-        if let data = request.httpBody { return data }
-        guard let stream = request.httpBodyStream else { return Data() }
+extension URLRequest {
+    var testBodyData: Data {
+        if let httpBody { return httpBody }
+        guard let stream = httpBodyStream else { return Data() }
         stream.open()
         defer { stream.close() }
         var result = Data()

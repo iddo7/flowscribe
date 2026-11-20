@@ -63,6 +63,23 @@ final class UsageIntegrationTests: XCTestCase {
         XCTAssertTrue(store.snapshot().buckets.isEmpty)
     }
 
+    func testFileTranscriptionUploadsMP3WithItsOwnMediaTypeAndSafeFilename() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("private recording \(UUID()).MP3")
+        try Data([0x49, 0x44, 0x33]).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let client = TranscriptionClient(session: session { request in
+            let multipart = String(decoding: request.testBodyData, as: UTF8.self)
+            XCTAssertTrue(multipart.contains("filename=\"audio.mp3\"\r\nContent-Type: audio/mpeg"))
+            XCTAssertFalse(multipart.contains(file.lastPathComponent))
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fake-key")
+            return (200, [:], Data(#"{"text":"Hello"}"#.utf8))
+        }, environment: ["OPENAI_API_KEY": "fake-key"], usageStore: nil)
+
+        let transcript = try await client.transcribe(fileAt: file)
+        XCTAssertEqual(transcript, "Hello")
+    }
+
     func testDictationMeasuresUploadedAudioAndExcludesHTTPRejections() async throws {
         let store = UsageStore(defaults: nil)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("usage-test-\(UUID()).wav")

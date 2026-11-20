@@ -37,6 +37,30 @@ A crucial gotcha: **an app launched from Finder, Spotlight, or `open` does not s
    ~/Applications/FlowScribe.app/Contents/MacOS/FlowScribe &
    ```
 
+## Transcribe files from the terminal or an agent
+
+The installer links `flowscribe` into `~/.local/bin`. If that directory is outside your PATH, use `~/.local/bin/flowscribe` directly.
+
+```bash
+flowscribe transcribe "/path/to/recording.m4a" > transcript.txt
+```
+
+FlowScribe sends the selected file to OpenAI using the key saved in FlowScribe Settings, or `OPENAI_API_KEY` if the process inherits it. The menu bar app can be closed. The CLI writes the transcript to stdout and errors to stderr. Files can be up to 25 MB in FLAC, MP3, MP4, MPEG, MPGA, M4A, OGG, WAV, or WebM format. CLI and MCP requests are billed by OpenAI and run outside the app's local usage dashboard.
+
+### Codex and Claude Code
+
+Register the local MCP server once per client to make its `transcribe_audio` tool available across projects on this Mac.
+
+```bash
+flowscribe_bin="$HOME/Applications/FlowScribe.app/Contents/MacOS/FlowScribe"
+codex mcp add flowscribe -- "$flowscribe_bin" mcp
+claude mcp add --scope user --transport stdio flowscribe -- "$flowscribe_bin" mcp
+```
+
+In a new session, ask “Transcribe `/absolute/path/to/recording.m4a` with FlowScribe.” The client starts FlowScribe and discovers the tool, which takes an absolute file path and returns plain text. API credentials stay in FlowScribe. The transcript becomes part of the agent's tool context and may be retained by the client. macOS may ask for Keychain or file access on first use.
+
+To disconnect, run `codex mcp remove flowscribe` and `claude mcp remove --scope user flowscribe`.
+
 ## How it works
 
 - Menu-bar-only app (`LSUIElement`) — no Dock icon.
@@ -80,7 +104,7 @@ The ElevenLabs key uses its own Keychain account, `elevenlabs-api-key`, under se
 
 Estimates use published API prices checked October 28, 2026: Natural/Expressive reading at $0.08 per 1,000 submitted characters, Fast at $0.04 per 1,000 characters, and the default `gpt-transcribe` dictation at $0.0045 per audio minute. Known legacy transcription models use their documented estimates. **Edit estimate rates…** sets effective rates for future requests; it does not rewrite earlier estimates. Unknown models or unreadable audio durations are identified as unpriced usage rather than silently treated as free. Provider plans, included credits, custom voice surcharges, discounts and taxes can differ from these estimates. Sources: [ElevenLabs API pricing](https://elevenlabs.io/pricing/api), [OpenAI pricing](https://developers.openai.com/api/docs/pricing).
 
-Every successful generation/upload is tracked once, including voice samples and prefetched audio, even if the response cannot be decoded. Replaying cached audio or changing playback speed adds no usage. ElevenLabs’ `character-cost` header supplies reported credits separately from the dollar estimate when available. Cancellations, network failures, server errors and requests still in flight are shown as unconfirmed possible charges outside the confirmed totals; HTTP rejections are excluded.
+Every successful generation or upload from the menu bar app is tracked once, including voice samples and prefetched audio, even if the response cannot be decoded. Replaying cached audio or changing playback speed adds no usage. ElevenLabs’ `character-cost` header supplies reported credits separately from the dollar estimate when available. Cancellations, network failures, server errors and requests still in flight are shown as unconfirmed possible charges outside the confirmed totals; HTTP rejections are excluded.
 
 The separate **ElevenLabs account** section can refresh the account-wide quota, credit reset date and upcoming invoice via `/v1/user/subscription`. This requires **User: Read** permission on the API key. A restricted key can still synthesize speech and track local costs without this permission. Account values include other apps and are never added to FlowScribe’s estimates. OpenAI’s account billing is linked separately; no administrator credential is needed for local tracking.
 

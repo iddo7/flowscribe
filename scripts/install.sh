@@ -16,6 +16,7 @@ APP_NAME="FlowScribe"
 APP_DIR="${HOME}/Applications/${APP_NAME}.app"
 MACOS_DIR="${APP_DIR}/Contents/MacOS"
 RESOURCES_DIR="${APP_DIR}/Contents/Resources"
+CLI_PATH="${HOME}/.local/bin/flowscribe"
 
 # Locate the release binary (override with FLOWSCRIBE_BIN=/path/to/flow ...).
 DEFAULT_BIN="${REPO_DIR}/.build/release/FlowScribe"
@@ -67,8 +68,12 @@ cat > "${APP_DIR}/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-cp "$BIN" "$MACOS_DIR/FlowScribe"
-chmod 755 "$MACOS_DIR/FlowScribe"
+# Replace the executable by rename so running MCP processes keep their original binary.
+STAGED_BIN="$(mktemp "$MACOS_DIR/.FlowScribe.XXXXXX")"
+trap 'rm -f "$STAGED_BIN"' EXIT
+cp "$BIN" "$STAGED_BIN"
+chmod 755 "$STAGED_BIN"
+mv -f "$STAGED_BIN" "$MACOS_DIR/FlowScribe"
 
 # Clear stale quarantine/extended attributes if present.
 xattr -cr "$APP_DIR" 2>/dev/null || true
@@ -81,6 +86,13 @@ codesign --force --deep --sign - \
     --requirements '=designated => identifier "com.flowscribe.app"' \
     "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR"
+
+mkdir -p "$(dirname "$CLI_PATH")"
+if [ ! -e "$CLI_PATH" ] && [ ! -L "$CLI_PATH" ]; then
+    ln -s "$MACOS_DIR/FlowScribe" "$CLI_PATH"
+elif [ "$(readlink "$CLI_PATH" || true)" != "$MACOS_DIR/FlowScribe" ]; then
+    echo "CLI link skipped because $CLI_PATH already exists. Use $MACOS_DIR/FlowScribe directly." >&2
+fi
 
 echo "Installed. Launch with:"
 echo "  open ${APP_DIR}"

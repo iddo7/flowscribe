@@ -1,5 +1,19 @@
 import Foundation
 
+enum TranscriptionAudioFormat: String, CaseIterable {
+    case flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, webm
+
+    static let supportedExtensions = allCases.map(\.rawValue).joined(separator: ", ")
+
+    var mimeType: String {
+        switch self {
+        case .mp3, .mpeg, .mpga: return "audio/mpeg"
+        case .mp4, .m4a: return "audio/mp4"
+        default: return "audio/\(rawValue)"
+        }
+    }
+}
+
 /// Pure multipart/form-data builder for the OpenAI transcription API. Unit-testable.
 enum MultipartBody {
     /// Builds a multipart body for POST https://api.openai.com/v1/audio/transcriptions.

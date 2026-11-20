@@ -1,5 +1,7 @@
 import AppKit
 
+FlowScribeCLI.runIfRequested(arguments: CommandLine.arguments)
+
 // Entry point for the SPM executable: boot AppKit without NIB. AppKit is
 // main-thread-only, so make that isolation explicit to Swift 6.
 MainActor.assumeIsolated {
@@ -11,7 +13,7 @@ MainActor.assumeIsolated {
         let client = TranscriptionClient()
         Task {
             do {
-                let text = try await client.transcribe(fileAt: file)
+                let text = try await client.transcribe(fileAt: file, format: .wav)
                 print(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                       ? "Transcription service returned no text."
                       : "Transcription request succeeded. Transcript content was not logged.")

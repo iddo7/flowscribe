@@ -4,6 +4,11 @@
 set -euo pipefail
 
 APP_DIR="${HOME}/Applications/FlowScribe.app"
+CLI_PATH="${HOME}/.local/bin/flowscribe"
+
+if [ "$(readlink "$CLI_PATH" || true)" = "$APP_DIR/Contents/MacOS/FlowScribe" ]; then
+    rm "$CLI_PATH"
+fi
 
 if [ -d "$APP_DIR" ]; then
     osascript -e 'tell application "FlowScribe" to quit' 2>/dev/null || true
